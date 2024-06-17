@@ -2060,7 +2060,8 @@ class GpuConvMeta(
       case (Some(Literal(fromBaseVal, IntegerType)), Some(Literal(toBaseVal, IntegerType)))
         if Set(fromBaseVal, toBaseVal).subsetOf(Set(10, 16)) => ()
       case _ =>
-        willNotWorkOnGpu(because = "only literal 10 or 16 for from_base and to_base are supported")
+        (willNotWorkOnGpu(because = s"either $fromBaseLit or $toBaseLit is not supported; " +
+          s"only literal 10 or 16 for from_base and to_base are supported"))
     }
   }
 

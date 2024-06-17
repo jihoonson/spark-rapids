@@ -220,6 +220,17 @@ class RegExpUtilsSuite extends AnyFunSuite {
   }
 }
 
+// class ConvSuite extends SparkQueryCompareTestSuite {
+//   test("conv with an unsupported fromBase") {
+//     val conf = new SparkConf()
+//     val result = withGpuSparkSession( session => {
+//       // conv(utf8StringsDf(session), 10. 16).collect()
+//       var data = utf8StringsDf(session)
+//       // collect(conv(_, 10, 16), data)
+//     }, conf)
+//   }
+// }
+
 /*
 * This isn't actually a test.  It's just useful to help visualize what's going on when there are
 * differences present.
