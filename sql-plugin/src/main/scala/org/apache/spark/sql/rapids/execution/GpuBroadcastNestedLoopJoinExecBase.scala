@@ -218,6 +218,7 @@ class ConditionalNestedLoopJoinIterator(
       joinTime = joinTime) {
   override def close(): Unit = {
     if (!closed) {
+      logError(this + " is being closed by thread " + Thread.currentThread().getName)
       super.close()
       condition.close()
     }
