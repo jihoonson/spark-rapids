@@ -63,7 +63,7 @@ abstract class AbstractGpuJoinIterator(
     targetSize: Long,
     val opTime: GpuMetric,
     joinTime: GpuMetric)
-    extends Iterator[ColumnarBatch] with TaskAutoCloseableResource {
+    extends Iterator[ColumnarBatch] with TaskAutoCloseableResource with Logging {
   private[this] var nextCb: Option[ColumnarBatch] = None
   private[this] var gathererStore: Option[JoinGatherer] = None
 
@@ -84,6 +84,9 @@ abstract class AbstractGpuJoinIterator(
 
   override def hasNext: Boolean = {
     if (closed) {
+      // TODO: could have been closed in the middle? if it was, it could be a race
+      // It seems like this is closed outside the plugin though..
+      logError("hasNext returns false since this iterator has been closed already")
       return false
     }
     var mayContinue = true
@@ -103,12 +106,17 @@ abstract class AbstractGpuJoinIterator(
           opTime.ns {
             nextCb = nextCbFromGatherer()
           }
+          if (nextCb.isEmpty) {
+            // Can setupNextGatherer return an empty gatherer before the read is completed?
+            logError("nextCb from a new gatherer is empty")
+          }
         } else {
           mayContinue = false
         }
       }
     }
     if (nextCb.isEmpty && shouldAutoCloseOnExhaust) {
+      logError("Closing myself as there is no data left to read")
       // Nothing is left to return so close ASAP.
       opTime.ns(close())
     }
@@ -149,6 +157,7 @@ abstract class AbstractGpuJoinIterator(
         withRetry(targetSizeWrapper, splitTargetSizeInHalfGpu) { attempt =>
           withRestoreOnRetry(gather) {
             val nextRows = JoinGatherer.getRowsInNextBatch(gather, attempt.targetSize)
+            logError("Gathering " + nextRows + " rows")
             gather.gatherNext(nextRows)
           }
         }.next()

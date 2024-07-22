@@ -23,9 +23,10 @@ import com.nvidia.spark.rapids._
 import com.nvidia.spark.rapids.Arm.{closeOnExcept, withResource}
 import com.nvidia.spark.rapids.RmmRapidsRetryIterator.{withRestoreOnRetry, withRetry, withRetryNoSplit}
 import com.nvidia.spark.rapids.shims.{GpuBroadcastJoinMeta, ShimBinaryExecNode}
-
 import org.apache.spark.TaskContext
+
 import org.apache.spark.broadcast.Broadcast
+import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, NamedExpression}
@@ -145,12 +146,17 @@ class CrossJoinIterator(
       joinTime) {
   override def close(): Unit = {
     if (!closed) {
+      logError(this + " is being closed by thread " + Thread.currentThread().getName)
       super.close()
       builtBatch.close()
     }
   }
 
-  override def hasNextStreamBatch: Boolean = stream.hasNext
+  override def hasNextStreamBatch: Boolean = {
+    logError("haxNextStreamBatch is called on " + this + " by thread "
+      + Thread.currentThread().getName)
+    stream.hasNext
+  }
 
   override def setupNextGatherer(): Option[JoinGatherer] = {
     val streamBatch = stream.next()
@@ -624,14 +630,17 @@ abstract class GpuBroadcastNestedLoopJoinExecBase(
       }
       val joinIterator: RDD[ColumnarBatch] = joinType match {
         case ExistenceJoin(_) =>
+          logError("Using ExistenceJoin")
           doUnconditionalExistenceJoin(relation, buildTime, buildDataSize)
         case LeftSemi =>
+          logError("Using LeftSemi")
           if (gpuBuildSide == GpuBuildRight) {
             leftExistenceJoin(relation, exists=true, buildTime, buildDataSize)
           } else {
             left.executeColumnar()
           }
         case LeftAnti =>
+          logError("Using LeftAnti")
           if (gpuBuildSide == GpuBuildRight) {
             leftExistenceJoin(relation, exists=false, buildTime, buildDataSize)
           } else {
@@ -640,18 +649,22 @@ abstract class GpuBroadcastNestedLoopJoinExecBase(
             new GpuCoalesceExec.EmptyRDDWithPartitions(sparkContext, childRDD.getNumPartitions)
           }
         case _ =>
+          logError("Using CrossJoin")
           // Everything else is treated like an unconditional cross join
           val buildSide = gpuBuildSide
           val joinTime = gpuLongMetric(JOIN_TIME)
           streamed.executeColumnar().mapPartitions { streamedIter =>
+            logError("Wrapping streamedIter")
             val lazyStream = streamedIter.map { cb =>
               withResource(cb) { cb =>
                 LazySpillableColumnarBatch(cb, "stream_batch")
               }
             }
+            logError("Wrapping buildBatch")
             val spillableBuiltBatch = withResource(builtBatch) {
               LazySpillableColumnarBatch(_, "built_batch")
             }
+            logError("Returning CrossJoinIterator")
             new CrossJoinIterator(
               spillableBuiltBatch,
               lazyStream,

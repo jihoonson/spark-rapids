@@ -29,9 +29,11 @@ class BroadcastNestedLoopJoinSuite extends SparkQueryCompareTestSuite {
 
     withGpuSparkSession(spark => {
       val df1 = longsDf(spark).repartition(2)
-      val df2 = nonZeroLongsDf(spark).repartition(2)
+//      val df2 = nonZeroLongsDf(spark).repartition(2)
+      val df2 = nullDf(spark)
       val df3 = df1.crossJoin(broadcast(df2))
-      df3.collect()
+      val result = df3.collect()
+      assert(result.length === df1.count() * df2.count())
       val plan = df3.queryExecution.executedPlan
 
       val nljCount =
@@ -49,10 +51,13 @@ class BroadcastNestedLoopJoinSuite extends SparkQueryCompareTestSuite {
           "ShuffleExchangeExec,RoundRobinPartitioning")
 
     withGpuSparkSession(spark => {
-      val df1 = longsDf(spark).repartition(2)
-      val df2 = nonZeroLongsDf(spark).repartition(2)
-      val df3 = df1.crossJoin(broadcast(df2))
-      df3.collect()
+//      val df1 = longsDf(spark).repartition(2)
+//      val df2 = nonZeroLongsDf(spark).repartition(2)
+      val df1 = longsDf(spark)
+      val numRows = df1.count()
+      val df3 = df1.crossJoin(broadcast(df1))
+      val result = df3.collect()
+      assert(result.length === numRows * numRows)
       val plan = df3.queryExecution.executedPlan
 
       val nljCount =
