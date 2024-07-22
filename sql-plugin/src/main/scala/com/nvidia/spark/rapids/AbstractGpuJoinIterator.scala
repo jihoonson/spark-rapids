@@ -108,9 +108,11 @@ abstract class AbstractGpuJoinIterator(
           }
           if (nextCb.isEmpty) {
             // Can setupNextGatherer return an empty gatherer before the read is completed?
+            // yes it is doing that.
             logError("nextCb from a new gatherer is empty")
           }
         } else {
+          logError("May no longer continue")
           mayContinue = false
         }
       }
@@ -199,7 +201,7 @@ abstract class SplittableJoinIterator(
       gatherNvtxName,
       targetSize,
       opTime = opTime,
-      joinTime = joinTime) with Logging {
+      joinTime = joinTime) {
   // For some join types even if there is no stream data we might output something
   private var isInitialJoin = true
   // If the join explodes this holds batches from the stream side split into smaller pieces.
@@ -219,7 +221,7 @@ abstract class SplittableJoinIterator(
 
   override def hasNextStreamBatch: Boolean = {
     val hasNext = isInitialJoin || pendingSplits.nonEmpty || stream.hasNext
-    logError("hasNextStreamBatch? " + hasNext + " in thread " + Thread.currentThread().getName)
+    logError("hasNextStreamBatch: " + hasNext)
     hasNext
   }
 

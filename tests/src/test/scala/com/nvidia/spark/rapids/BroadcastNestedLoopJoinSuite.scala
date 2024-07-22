@@ -26,14 +26,15 @@ class BroadcastNestedLoopJoinSuite extends SparkQueryCompareTestSuite {
   test("BroadcastNestedLoopJoinExec AQE off") {
     val conf = new SparkConf()
         .set(SQLConf.ADAPTIVE_EXECUTION_ENABLED.key, "false")
+      .set("spark.rapids.sql.batchSizeBytes", "20")
 
     withGpuSparkSession(spark => {
       val df1 = longsDf(spark).repartition(2)
 //      val df2 = nonZeroLongsDf(spark).repartition(2)
-      val df2 = nullDf(spark)
-      val df3 = df1.crossJoin(broadcast(df2))
+      val df2 = longsDf(spark)
+      val df3 = df1.crossJoin(broadcast(df2)).filter(df1.col("longs").gt(df2.col("longs")))
       val result = df3.collect()
-      assert(result.length === df1.count() * df2.count())
+      assert(result.length === 45)
       val plan = df3.queryExecution.executedPlan
 
       val nljCount =
@@ -49,15 +50,17 @@ class BroadcastNestedLoopJoinSuite extends SparkQueryCompareTestSuite {
         // In some cases AQE can make the children not look like they are on the GPU
         .set(RapidsConf.TEST_ALLOWED_NONGPU.key,
           "ShuffleExchangeExec,RoundRobinPartitioning")
+      .set("spark.rapids.sql.batchSizeBytes", "10")
 
     withGpuSparkSession(spark => {
 //      val df1 = longsDf(spark).repartition(2)
 //      val df2 = nonZeroLongsDf(spark).repartition(2)
-      val df1 = longsDf(spark)
-      val numRows = df1.count()
-      val df3 = df1.crossJoin(broadcast(df1))
+      val df1 = longsDf(spark).repartition(2)
+      //      val df2 = nonZeroLongsDf(spark).repartition(2)
+      val df2 = longsDf(spark)
+      val df3 = df1.crossJoin(broadcast(df2)).filter(df1.col("longs").gt(df2.col("longs")))
       val result = df3.collect()
-      assert(result.length === numRows * numRows)
+      assert(result.length === 45)
       val plan = df3.queryExecution.executedPlan
 
       val nljCount =
