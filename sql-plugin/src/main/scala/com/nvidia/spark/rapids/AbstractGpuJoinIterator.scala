@@ -220,9 +220,10 @@ abstract class SplittableJoinIterator(
       numJoinRows: Option[Long]): Option[JoinGatherer]
 
   override def hasNextStreamBatch: Boolean = {
-    val hasNext = isInitialJoin || pendingSplits.nonEmpty || stream.hasNext
-    logError("hasNextStreamBatch: " + hasNext)
-    hasNext
+    logError("isInitialJoin: " + isInitialJoin
+      + ", pendingSplits.nonEmpty: " + pendingSplits.nonEmpty
+      + ", stream.hasNext: " + stream.hasNext)
+    isInitialJoin || pendingSplits.nonEmpty || stream.hasNext
   }
 
   override def setupNextGatherer(): Option[JoinGatherer] = {
