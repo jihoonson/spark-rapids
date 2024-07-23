@@ -103,6 +103,9 @@ abstract class AbstractGpuJoinIterator(
             gathererStore = None
           }
           gathererStore = setupNextGatherer()
+          if (gathererStore.isEmpty) {
+            logError("gathererStore is empty after setup a new one")
+          }
           opTime.ns {
             nextCb = nextCbFromGatherer()
           }
