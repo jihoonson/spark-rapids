@@ -221,7 +221,7 @@ abstract class SplittableJoinIterator(
 
   override def hasNextStreamBatch: Boolean = {
     logError("isInitialJoin: " + isInitialJoin
-      + ", pendingSplits.nonEmpty: " + pendingSplits.nonEmpty
+      + ", pendingSplits.size: " + pendingSplits.size
       + ", stream.hasNext: " + stream.hasNext)
     isInitialJoin || pendingSplits.nonEmpty || stream.hasNext
   }
@@ -393,6 +393,7 @@ abstract class SplittableJoinIterator(
       }
       if (gatherer.isDone) {
         // Nothing matched...
+        logError("Gatherer is done. Returning None gatherer")
         gatherer.close()
         None
       } else {

@@ -254,6 +254,7 @@ class ConditionalNestedLoopJoinIterator(
       numJoinRows: Option[Long]): Option[JoinGatherer] = {
     if (numJoinRows.contains(0)) {
       // nothing matched
+      logError("numJoinRows was 0. Returning None gatherer")
       return None
     }
     // cb will be closed by the caller, so use a spill-only version here
@@ -785,6 +786,7 @@ abstract class GpuBroadcastNestedLoopJoinExecBase(
     val buildSide = gpuBuildSide
     streamed.executeColumnar().mapPartitions { streamedIter =>
       val lazyStream = streamedIter.map { cb =>
+        logError("Wrapping streamedIter")
         withResource(cb) { cb =>
           LazySpillableColumnarBatch(cb, "stream_batch")
         }
