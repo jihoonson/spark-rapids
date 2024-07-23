@@ -252,9 +252,9 @@ class ConditionalNestedLoopJoinIterator(
   override def createGatherer(
       cb: LazySpillableColumnarBatch,
       numJoinRows: Option[Long]): Option[JoinGatherer] = {
+    logError("numJoinRows: " + numJoinRows.getOrElse("None"))
     if (numJoinRows.contains(0)) {
       // nothing matched
-      logError("numJoinRows was 0. Returning None gatherer")
       return None
     }
     // cb will be closed by the caller, so use a spill-only version here
