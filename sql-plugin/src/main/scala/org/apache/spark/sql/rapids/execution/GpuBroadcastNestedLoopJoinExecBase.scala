@@ -237,13 +237,19 @@ class ConditionalNestedLoopJoinIterator(
             }
             logError("computing " + joinType.sql + " output size for left: " + left.getRowCount
               + ", right: " + right.getRowCount)
-            joinType match {
-              case _: InnerLike => left.conditionalInnerJoinRowCount(right, condition)
-              case LeftOuter => left.conditionalLeftJoinRowCount(right, condition)
-              case RightOuter => right.conditionalLeftJoinRowCount(left, condition)
-              case LeftSemi => left.conditionalLeftSemiJoinRowCount(right, condition)
-              case LeftAnti => left.conditionalLeftAntiJoinRowCount(right, condition)
-              case _ => throw new IllegalStateException(s"Unsupported join type $joinType")
+            try {
+              joinType match {
+                case _: InnerLike => left.conditionalInnerJoinRowCount(right, condition)
+                case LeftOuter => left.conditionalLeftJoinRowCount(right, condition)
+                case RightOuter => right.conditionalLeftJoinRowCount(left, condition)
+                case LeftSemi => left.conditionalLeftSemiJoinRowCount(right, condition)
+                case LeftAnti => left.conditionalLeftAntiJoinRowCount(right, condition)
+                case _ => throw new IllegalStateException(s"Unsupported join type $joinType")
+              }
+            } catch {
+              case e: Exception =>
+                logError("Got exception while computing numJoinRows: ", e)
+                throw e
             }
           }
         }
