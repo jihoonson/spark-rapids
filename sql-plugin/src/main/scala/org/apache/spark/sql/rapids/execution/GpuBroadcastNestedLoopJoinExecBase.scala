@@ -235,7 +235,7 @@ class ConditionalNestedLoopJoinIterator(
               case GpuBuildLeft => (builtTable, streamTable)
               case GpuBuildRight => (streamTable, builtTable)
             }
-            logError("computing join output size for left: " + left.getRowCount
+            logError("computing " + joinType.sql + " output size for left: " + left.getRowCount
               + ", right: " + right.getRowCount)
             joinType match {
               case _: InnerLike => left.conditionalInnerJoinRowCount(right, condition)

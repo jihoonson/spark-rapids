@@ -241,6 +241,7 @@ abstract class SplittableJoinIterator(
       opTime.ns {
         withResource(scb) { scb =>
           val numJoinRows = computeNumJoinRows(scb)
+          logError("numJoinRows from computeNumJoinRows: " + numJoinRows)
 
           // We want the gather maps size to be around the target size. There are two gather maps
           // that are made up of ints, so compute how many rows on the stream side will produce the
