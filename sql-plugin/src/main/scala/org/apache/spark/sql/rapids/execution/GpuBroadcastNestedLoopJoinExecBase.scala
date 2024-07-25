@@ -237,6 +237,8 @@ class ConditionalNestedLoopJoinIterator(
             }
             logError("computing " + joinType.sql + " output size for left: " + left.getRowCount
               + ", right: " + right.getRowCount)
+            DumpUtils.dumpToParquetFile(left, "/home/ubuntu/captured_data/left_table")
+            DumpUtils.dumpToParquetFile(right, "/home/ubuntu/captured_data/right_table")
             try {
               joinType match {
                 case _: InnerLike => left.conditionalInnerJoinRowCount(right, condition)
