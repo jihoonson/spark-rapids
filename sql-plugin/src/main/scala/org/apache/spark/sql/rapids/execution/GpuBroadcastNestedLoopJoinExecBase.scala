@@ -19,6 +19,8 @@ package org.apache.spark.sql.rapids.execution
 import ai.rapids.cudf
 import ai.rapids.cudf.{ast, GatherMap, NvtxColor, OutOfBoundsPolicy, Scalar, Table}
 import ai.rapids.cudf.ast.CompiledExpression
+import com.databricks.sdk.core.DatabricksConfig
+import com.databricks.sdk.scala.dbutils.DBUtils
 import com.nvidia.spark.rapids._
 import com.nvidia.spark.rapids.Arm.{closeOnExcept, withResource}
 import com.nvidia.spark.rapids.RmmRapidsRetryIterator.{withRestoreOnRetry, withRetry, withRetryNoSplit}
@@ -237,8 +239,26 @@ class ConditionalNestedLoopJoinIterator(
             }
             logError("computing " + joinType.sql + " output size for left: " + left.getRowCount
               + ", right: " + right.getRowCount)
-            DumpUtils.dumpToParquetFile(left, "/home/ubuntu/captured_data/left_table")
-            DumpUtils.dumpToParquetFile(right, "/home/ubuntu/captured_data/right_table")
+            val leftPath = DumpUtils.dumpToParquetFile(left,
+              "/home/ubuntu/left_table")
+            val rightPath = DumpUtils.dumpToParquetFile(right,
+              "/home/ubuntu/right_table")
+            logError("Captured both input tables")
+            val dbutils = DBUtils.getDBUtils(new DatabricksConfig().setProfile("DEFAULT"))
+            val dstPath = "dbfs:jihoons/scratch/captured_data/" + System.currentTimeMillis()
+            if (!dbutils.fs.mkdirs(dstPath)) {
+              logError("Failed to create a directory at " + dstPath)
+            } else {
+              leftPath match {
+                case Some(p) => dbutils.fs.cp(p, dstPath, false)
+                case _ => logError("Left table path is empty")
+              }
+              rightPath match {
+                case Some(p) => dbutils.fs.cp(p, dstPath, false)
+                case _ => logError("right table path is empty")
+              }
+            }
+
             try {
               joinType match {
                 case _: InnerLike => left.conditionalInnerJoinRowCount(right, condition)
