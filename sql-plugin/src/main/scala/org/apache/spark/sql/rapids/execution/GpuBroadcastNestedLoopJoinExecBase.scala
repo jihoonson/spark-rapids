@@ -19,8 +19,6 @@ package org.apache.spark.sql.rapids.execution
 import ai.rapids.cudf
 import ai.rapids.cudf.{ast, GatherMap, NvtxColor, OutOfBoundsPolicy, Scalar, Table}
 import ai.rapids.cudf.ast.CompiledExpression
-import com.databricks.sdk.core.DatabricksConfig
-import com.databricks.sdk.scala.dbutils.DBUtils
 import com.nvidia.spark.rapids._
 import com.nvidia.spark.rapids.Arm.{closeOnExcept, withResource}
 import com.nvidia.spark.rapids.RmmRapidsRetryIterator.{withRestoreOnRetry, withRetry, withRetryNoSplit}
