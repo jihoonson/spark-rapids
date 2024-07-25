@@ -63,11 +63,23 @@
             <groupId>com.databricks</groupId>
             <artifactId>databricks-sdk-java</artifactId>
             <version>0.0.1</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>commons-io</groupId>
+                    <artifactId>commons-io</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>com.databricks</groupId>
             <artifactId>databricks-dbutils-scala_2.12</artifactId>
             <version>0.1.4</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>commons-io</groupId>
+                    <artifactId>commons-io</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
 
