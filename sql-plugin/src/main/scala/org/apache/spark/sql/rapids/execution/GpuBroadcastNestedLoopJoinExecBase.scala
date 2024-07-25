@@ -240,24 +240,10 @@ class ConditionalNestedLoopJoinIterator(
             logError("computing " + joinType.sql + " output size for left: " + left.getRowCount
               + ", right: " + right.getRowCount)
             val leftPath = DumpUtils.dumpToParquetFile(left,
-              "/home/ubuntu/left_table")
+              "/dbfs/jihoons/scratch/left_table")
             val rightPath = DumpUtils.dumpToParquetFile(right,
-              "/home/ubuntu/right_table")
-            logError("Captured both input tables")
-            val dbutils = DBUtils.getDBUtils(new DatabricksConfig().setProfile("DEFAULT"))
-            val dstPath = "dbfs:jihoons/scratch/captured_data/" + System.currentTimeMillis()
-            if (!dbutils.fs.mkdirs(dstPath)) {
-              logError("Failed to create a directory at " + dstPath)
-            } else {
-              leftPath match {
-                case Some(p) => dbutils.fs.cp(p, dstPath, false)
-                case _ => logError("Left table path is empty")
-              }
-              rightPath match {
-                case Some(p) => dbutils.fs.cp(p, dstPath, false)
-                case _ => logError("right table path is empty")
-              }
-            }
+              "/dbfs/jihoons/scratch/right_table")
+            logError("Captured both input tables at " + leftPath + ", " + rightPath)
 
             try {
               joinType match {
