@@ -22,7 +22,7 @@ import java.util.concurrent.{ConcurrentHashMap, LinkedBlockingQueue}
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 
-import ai.rapids.cudf.{NvtxColor, NvtxRange}
+import ai.rapids.cudf.{NvtxColor, NvtxRange, NvtxUniqueRange}
 import com.nvidia.spark.rapids.ScalableTaskCompletion.onTaskCompletion
 
 import org.apache.spark.TaskContext
@@ -187,6 +187,8 @@ private final class SemaphoreTaskInfo(val taskAttemptId: Long) extends Logging {
 
   type GpuBackingSemaphore = PrioritySemaphore[Long]
 
+  var nvtxRange: Option[NvtxUniqueRange] = None
+
   /**
    * Does this task have the GPU semaphore or not. Be careful because it can change at
    * any point in time. So only use it for logging.
@@ -258,6 +260,8 @@ private final class SemaphoreTaskInfo(val taskAttemptId: Long) extends Logging {
             // We now own the semaphore so we need to wake up all of the other tasks that are
             // waiting.
             hasSemaphore = true
+            nvtxRange =
+              Some(new NvtxUniqueRange(s"semaphore-${taskAttemptId}", NvtxColor.ORANGE))
             moveToActive(t)
             notifyAll()
             done = true
@@ -309,6 +313,10 @@ private final class SemaphoreTaskInfo(val taskAttemptId: Long) extends Logging {
       semaphore.release(numPermits)
       hasSemaphore = false
       lastHeld = System.currentTimeMillis()
+      nvtxRange match {
+        case Some(range) => range.close() // TODO: safeClose
+        case _ => // do nothing
+      }
     }
     // It should be impossible for the current thread to be blocked when releasing the semaphore
     // because no blocked thread should ever leave `blockUntilReady`, which is where we put it in
@@ -325,6 +333,7 @@ private final class GpuSemaphore() extends Logging {
   type GpuBackingSemaphore = PrioritySemaphore[Long]
   private val semaphore = new GpuBackingSemaphore(MAX_PERMITS)
   // Keep track of all tasks that are both active on the GPU and blocked waiting on the GPU
+  // taskAttemptId => semaphoreTaskInfo
   private val tasks = new ConcurrentHashMap[Long, SemaphoreTaskInfo]
 
   def tryAcquire(context: TaskContext): TryAcquireResult = {
