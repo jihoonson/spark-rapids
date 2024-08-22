@@ -1076,6 +1076,9 @@ abstract class RapidsShuffleThreadedReaderBase[K, C](
   }
 }
 
+/**
+ * TODO: where are you caching what for what?
+ */
 class RapidsCachingWriter[K, V](
     blockManager: BlockManager,
     // Never keep a reference to the ShuffleHandle in the cache as it being GCed triggers
@@ -1421,6 +1424,7 @@ class RapidsShuffleInternalManagerBase(conf: SparkConf, val isDriver: Boolean)
       handle: ShuffleHandle, mapId: Long, context: TaskContext,
     metricsReporter: ShuffleWriteMetricsReporter): ShuffleWriter[K, V] = {
     handle match {
+      // TODO: when is GpuShuffleHandle vs BypassMergeSortShuffleHandle used?
       case gpu: GpuShuffleHandle[_, _] =>
         registerGpuShuffle(handle.shuffleId)
         new RapidsCachingWriter(

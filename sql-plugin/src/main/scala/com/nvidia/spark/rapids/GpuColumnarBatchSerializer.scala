@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2023, NVIDIA CORPORATION.
+ * Copyright (c) 2019-2024, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,8 +27,8 @@ import ai.rapids.cudf.JCudfSerialization.SerializedTableHeader
 import com.nvidia.spark.rapids.Arm.{closeOnExcept, withResource}
 import com.nvidia.spark.rapids.RapidsPluginImplicits._
 import com.nvidia.spark.rapids.ScalableTaskCompletion.onTaskCompletion
-
 import org.apache.spark.TaskContext
+
 import org.apache.spark.serializer.{DeserializationStream, SerializationStream, Serializer, SerializerInstance}
 import org.apache.spark.sql.types.NullType
 import org.apache.spark.sql.vectorized.ColumnarBatch
@@ -134,8 +134,12 @@ class GpuColumnarBatchSerializer(dataSize: GpuMetric)
 private class GpuColumnarBatchSerializerInstance(dataSize: GpuMetric) extends SerializerInstance {
 
   override def serializeStream(out: OutputStream): SerializationStream = new SerializationStream {
-    private[this] val dOut: DataOutputStream =
-      new DataOutputStream(new BufferedOutputStream(out))
+    private[this] val dOut: DataOutputStream = {
+      // TODO: this implementation is used only in RapidsShuffleThreadedWriter. We may not want to
+      // use AsyncOutputStream here.
+//      new DataOutputStream(new AsyncOutputStream(new BufferedOutputStream(out)))
+       new DataOutputStream(new BufferedOutputStream(out))
+    }
 
     override def writeValue[T: ClassTag](value: T): SerializationStream = {
       val batch = value.asInstanceOf[ColumnarBatch]

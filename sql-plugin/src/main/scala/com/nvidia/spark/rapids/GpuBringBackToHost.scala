@@ -48,8 +48,10 @@ case class GpuBringBackToHost(child: SparkPlan) extends ShimUnaryExecNode with G
           i => b.column(i).asInstanceOf[GpuColumnVector].copyToHost())
         new ColumnarBatch(hostColumns.toArray, b.numRows())
       } finally {
+        // TODO: safeClose
         range.close()
         b.close()
+        // TODO: Ideally, we should release the semaphore after the task is done instead of here.
         // Leaving the GPU for a while
         GpuSemaphore.releaseIfNecessary(TaskContext.get())
       }
