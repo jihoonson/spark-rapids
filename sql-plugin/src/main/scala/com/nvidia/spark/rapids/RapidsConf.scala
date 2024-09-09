@@ -2383,6 +2383,19 @@ val SHUFFLE_COMPRESSION_LZ4_CHUNK_SIZE = conf("spark.rapids.shuffle.compression.
       .booleanConf
       .createWithDefault(true)
 
+  val ENABLE_ASYNC_OUTPUT_WRITE =
+    conf("spark.rapids.sql.asyncOutputWrite.enabled")
+      .doc("Option to turn on the async ouptut write. ")
+      .booleanConf
+      .createWithDefault(false)
+
+  val ENABLE_INTERMITTENT_SEMAPHORE_RELEASE_IN_OUTPUT_WRITE =
+    conf("spark.rapids.sql.intermittentSemaphoreReleaseInOutputWrite.enabled")
+      .doc("Option to turn on the async ouptut write. ")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   private def printSectionHeader(category: String): Unit =
     println(s"\n### $category")
 
@@ -3216,6 +3229,11 @@ class RapidsConf(conf: Map[String, String]) extends Logging {
   lazy val loreDumpPath: Option[String] = get(LORE_DUMP_PATH)
 
   lazy val caseWhenFuseEnabled: Boolean = get(CASE_WHEN_FUSE)
+
+  lazy val isAsyncOutputWriteEnabled: Boolean = get(ENABLE_ASYNC_OUTPUT_WRITE)
+
+  lazy val isIntermittentSemaphoreReleaseInOutputWriteEnabled: Boolean =
+    get(ENABLE_INTERMITTENT_SEMAPHORE_RELEASE_IN_OUTPUT_WRITE)
 
   private val optimizerDefaults = Map(
     // this is not accurate because CPU projections do have a cost due to appending values

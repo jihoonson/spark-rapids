@@ -42,7 +42,8 @@ class AsyncOutputStream(val delegate: OutputStream) extends OutputStream {
     throwIfError()
     ensureOpen()
 
-    val scheduleResult = AsyncWriter.schedule(streamId, new Task(b, off, len, streamId, delegate))
+    val scheduleResult = AsyncWriter.schedule(
+      new WriteStreamTask(b, off, len, streamId, delegate))
     scheduleResult match {
       case None => // TODO: wait and retry
       case _ => // do nothing

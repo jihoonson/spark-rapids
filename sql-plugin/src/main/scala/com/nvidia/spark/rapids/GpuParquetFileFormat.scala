@@ -271,13 +271,18 @@ class GpuParquetFileFormat extends ColumnarFileFormat with Logging {
           s"Set Parquet option ${ParquetOutputFormat.JOB_SUMMARY_LEVEL} to NONE.")
     }
 
+    val asyncOutputWriteEnabled = RapidsConf.ENABLE_ASYNC_OUTPUT_WRITE.get(sqlConf)
+    val releaseSemaphoreIntermittently =
+      RapidsConf.ENABLE_INTERMITTENT_SEMAPHORE_RELEASE_IN_OUTPUT_WRITE.get(sqlConf)
+
     new ColumnarOutputWriterFactory {
         override def newInstance(
           path: String,
           dataSchema: StructType,
           context: TaskAttemptContext): ColumnarOutputWriter = {
         new GpuParquetWriter(path, dataSchema, compressionType, outputTimestampType.toString,
-          dateTimeRebaseMode, timestampRebaseMode, context, parquetFieldIdWriteEnabled)
+          dateTimeRebaseMode, timestampRebaseMode, context, parquetFieldIdWriteEnabled,
+          asyncOutputWriteEnabled, releaseSemaphoreIntermittently)
       }
 
       override def getFileExtension(context: TaskAttemptContext): String = {
@@ -299,8 +304,11 @@ class GpuParquetWriter(
     dateRebaseMode: DateTimeRebaseMode,
     timestampRebaseMode: DateTimeRebaseMode,
     context: TaskAttemptContext,
-    parquetFieldIdEnabled: Boolean)
-  extends ColumnarOutputWriter(context, dataSchema, "Parquet", true) {
+    parquetFieldIdEnabled: Boolean,
+    asyncWriteEnabled: Boolean,
+    releaseSemaphoreIntermittently: Boolean)
+  extends ColumnarOutputWriter(context, dataSchema, "Parquet", true, asyncWriteEnabled,
+    releaseSemaphoreIntermittently) {
   override def throwIfRebaseNeededInExceptionMode(batch: ColumnarBatch): Unit = {
     val cols = GpuColumnVector.extractBases(batch)
     cols.foreach { col =>

@@ -70,7 +70,9 @@ abstract class ColumnarOutputWriterFactory extends Serializable {
 abstract class ColumnarOutputWriter(context: TaskAttemptContext,
     dataSchema: StructType,
     rangeName: String,
-    includeRetry: Boolean) extends HostBufferConsumer {
+    includeRetry: Boolean,
+    asyncWriteEnabled: Boolean = false,
+    releaseSemaphoreIntermittently: Boolean = false) extends HostBufferConsumer {
 
   protected val tableWriter: TableWriter
 
@@ -81,7 +83,12 @@ abstract class ColumnarOutputWriter(context: TaskAttemptContext,
   protected def getOutputStream: OutputStream = {
     val hadoopPath = new Path(path)
     val fs = hadoopPath.getFileSystem(conf)
-    new AsyncOutputStream(fs.create(hadoopPath, false))
+    val dos = fs.create(hadoopPath, false)
+    if (asyncWriteEnabled) {
+      new AsyncOutputStream(dos)
+    } else {
+      dos
+    }
   }
 
   protected val outputStream: OutputStream = getOutputStream
@@ -167,7 +174,10 @@ abstract class ColumnarOutputWriter(context: TaskAttemptContext,
     // we successfully buffered to host memory, release the semaphore and write
     // the buffered data to the FS
     // TODO: config to release semaphore
-    GpuSemaphore.releaseIfNecessary(TaskContext.get)
+    if (releaseSemaphoreIntermittently) {
+      GpuSemaphore.releaseIfNecessary(TaskContext.get)
+    }
+
     writeBufferedData()
     updateStatistics(writeStartTime, gpuTime, statsTrackers)
     spillableBatch.numRows()
@@ -244,6 +254,7 @@ object ColumnarOutputWriter {
         while (left > 0) {
           val toCopy = math.min(tempBuffer.length, left).toInt
           buffer.getBytes(tempBuffer, 0, offset, toCopy)
+          // TODO: it would be nice if this copy can be done in the async task
           outputStream.write(tempBuffer, 0, toCopy)
           left = left - toCopy
           offset = offset + toCopy
