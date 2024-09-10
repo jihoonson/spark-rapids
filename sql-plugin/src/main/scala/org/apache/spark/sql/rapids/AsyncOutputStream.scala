@@ -18,15 +18,30 @@ package org.apache.spark.sql.rapids
 
 import java.io.{IOException, OutputStream}
 
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
+
 /**
  * Proxy to AsyncWriter
  *
  * TODO: not thread-safe
  */
-class AsyncOutputStream(val delegate: OutputStream) extends OutputStream {
-  private val streamId = AsyncWriter.register()
+class AsyncOutputStream(val delegate: OutputStream, poolSize: Int) extends OutputStream {
+  private val asyncWriter = new AsyncWriter(poolSize)
+  private val streamId = asyncWriter.register()
 
   private var closed = false
+
+  // TODO: abstract it so that it can be used for writing HostMemoryBuffers? to perform the copy
+  // from native memory to java heap memory asynchronously.
+  // like, ByteBufferTask, HostMemoryBufferTask, etc.
+  private class WriteStreamTask(val b: Array[Byte], val off: Int, val len: Int, streamId: Int)
+    extends Task(streamId) {
+
+    override def run(): Unit = {
+      delegate.write(b, off, len)
+    }
+  }
 
   override def write(b: Int): Unit = {
     throwIfError()
@@ -42,8 +57,7 @@ class AsyncOutputStream(val delegate: OutputStream) extends OutputStream {
     throwIfError()
     ensureOpen()
 
-    val scheduleResult = AsyncWriter.schedule(
-      new WriteStreamTask(b, off, len, streamId, delegate))
+    val scheduleResult = asyncWriter.schedule(new WriteStreamTask(b, off, len, streamId))
     scheduleResult match {
       case None => // TODO: wait and retry
       case _ => // do nothing
@@ -55,7 +69,8 @@ class AsyncOutputStream(val delegate: OutputStream) extends OutputStream {
     throwIfError()
     ensureOpen()
 
-    AsyncWriter.flush(streamId)
+    val flushing = asyncWriter.flush(streamId)
+    Await.ready(flushing, Duration.Undefined)
   }
 
   @throws[IOException]
@@ -63,7 +78,7 @@ class AsyncOutputStream(val delegate: OutputStream) extends OutputStream {
     throwIfError()
 
     if (!closed) {
-      AsyncWriter.flushAndCloseStream(streamId)
+      asyncWriter.flushAndCloseStream(streamId)
       closed = true
     }
   }
@@ -77,7 +92,7 @@ class AsyncOutputStream(val delegate: OutputStream) extends OutputStream {
 
   @throws[IOException]
   private def throwIfError(): Unit = {
-    AsyncWriter.latestError(streamId) match {
+    asyncWriter.latestError(streamId) match {
       case Some(t) if t.isInstanceOf[IOException] => throw t
       case Some(t) => throw new IOException(t)
       case None =>

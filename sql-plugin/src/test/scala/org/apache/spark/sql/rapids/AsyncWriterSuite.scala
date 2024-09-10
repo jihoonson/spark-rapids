@@ -5,9 +5,21 @@ import java.util.concurrent.ConcurrentLinkedDeque
 import scala.concurrent.Await
 import scala.concurrent.duration.{Duration, MILLISECONDS}
 
+import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funsuite.AnyFunSuite
 
-class AsyncWriterSuite extends AnyFunSuite {
+class AsyncWriterSuite extends AnyFunSuite with BeforeAndAfterAll {
+
+  // TODO: close after all tests
+  var asyncWriter: AsyncWriter = null
+
+  override def beforeAll(): Unit = {
+    asyncWriter = new AsyncWriter(2)
+  }
+
+  override def afterAll(): Unit = {
+    asyncWriter.close()
+  }
 
   class SleepTask(id: Int, durationMs: Long) extends Task(id) {
 
@@ -18,7 +30,7 @@ class AsyncWriterSuite extends AnyFunSuite {
   }
 
   def scheduleTask(task: Task): Unit = {
-    val scheduled = AsyncWriter.schedule(task)
+    val scheduled = asyncWriter.schedule(task)
     scheduled match {
       case Some(_) => // Do nothing
       case None => fail("Task not scheduled")
@@ -26,35 +38,35 @@ class AsyncWriterSuite extends AnyFunSuite {
   }
 
   test("test schedule a task and wait for it to finish") {
-    val id = AsyncWriter.register()
+    val id = asyncWriter.register()
     try {
-      val scheduled = AsyncWriter.schedule(new SleepTask(id, 100))
+      val scheduled = asyncWriter.schedule(new SleepTask(id, 100))
       scheduled match {
         case Some(f) => Await.ready(f, Duration(1000, MILLISECONDS))
         case None => fail("Task not scheduled")
       }
     } finally {
-      AsyncWriter.deregister(id)
+      asyncWriter.deregister(id)
     }
   }
 
   test("test schedule multiple tasks for the same stream and wait for them to flush") {
-    val id = AsyncWriter.register()
+    val id = asyncWriter.register()
     try {
       // Schedule 10 tasks
       for (_ <- 0 until 10) {
         scheduleTask(new SleepTask(id, 100))
       }
-      val flushing = AsyncWriter.flush(id)
+      val flushing = asyncWriter.flush(id)
       Await.ready(flushing, Duration(2000, MILLISECONDS))
     } finally {
-      AsyncWriter.deregister(id)
+      asyncWriter.deregister(id)
     }
   }
 
   test("test schedule multiple tasks for various streams and wait for one stream to flush") {
-    val id1 = AsyncWriter.register()
-    val id2 = AsyncWriter.register()
+    val id1 = asyncWriter.register()
+    val id2 = asyncWriter.register()
     try {
       // Schedule 5 tasks with id1
       for (_ <- 0 until 5) {
@@ -65,17 +77,18 @@ class AsyncWriterSuite extends AnyFunSuite {
         scheduleTask(new SleepTask(id2, 100))
       }
 
-      val flushing = AsyncWriter.flush(id1)
+      val flushing = asyncWriter.flush(id1)
       Await.ready(flushing, Duration(600, MILLISECONDS))
     } finally {
-      AsyncWriter.deregister(id1)
-      AsyncWriter.deregister(id2)
+      asyncWriter.deregister(id1)
+      asyncWriter.deregister(id2)
     }
   }
 
   test("test schedule multiple tasks for various streams and cancel one of them") {
-    val id1 = AsyncWriter.register()
-    val id2 = AsyncWriter.register()
+    val id1 = asyncWriter.register()
+    val id2 = asyncWriter.register()
+    System.err.println("id1: " + id1 + ", id2: " + id2)
     try {
       // Schedule 5 tasks with id1 and id2, respectively
       for (_ <- 0 until 5) {
@@ -83,12 +96,12 @@ class AsyncWriterSuite extends AnyFunSuite {
         scheduleTask(new SleepTask(id2, 100))
       }
 
-      AsyncWriter.cancelStream(id1)
-      val flushing = AsyncWriter.flush(id1)
+      asyncWriter.cancelStream(id1)
+      val flushing = asyncWriter.flush(id1)
       assert(flushing.isCompleted) // TODO: test if it has been cancelled
     } finally {
-      AsyncWriter.deregister(id1)
-      AsyncWriter.deregister(id2)
+      asyncWriter.deregister(id1)
+      asyncWriter.deregister(id2)
     }
   }
 
@@ -104,28 +117,29 @@ class AsyncWriterSuite extends AnyFunSuite {
     val q1 = new ConcurrentLinkedDeque[Int]()
     val q2 = new ConcurrentLinkedDeque[Int]()
 
-    val id1 = AsyncWriter.register()
-    val id2 = AsyncWriter.register()
+    val id1 = asyncWriter.register()
+    val id2 = asyncWriter.register()
+    System.err.println("id1: " + id1 + ", id2: " + id2)
     try {
       for (i <- 0 until 10) {
         scheduleTask(new OrderedTask(id1, 100, i, q1))
         scheduleTask(new OrderedTask(id2, 100, i, q2))
       }
-      var flushing = AsyncWriter.flush(id1)
-      Await.ready(flushing, Duration(2000, MILLISECONDS))
+      val flushing1 = asyncWriter.flush(id1)
+      val flushing2 = asyncWriter.flush(id2)
+      Await.ready(flushing1, Duration(2000, MILLISECONDS))
       assert(q1.size() == 10)
       for (i <- 0 until 10) {
         assertResult(i)(q1.poll())
       }
-      flushing = AsyncWriter.flush(id2)
-      Await.ready(flushing, Duration(200, MILLISECONDS))
+      Await.ready(flushing2, Duration(200, MILLISECONDS))
       assert(q2.size() == 10)
       for (i <- 0 until 10) {
         assertResult(i)(q2.poll())
       }
     } finally {
-      AsyncWriter.deregister(id1)
-      AsyncWriter.deregister(id2)
+      asyncWriter.deregister(id1)
+      asyncWriter.deregister(id2)
     }
   }
 }

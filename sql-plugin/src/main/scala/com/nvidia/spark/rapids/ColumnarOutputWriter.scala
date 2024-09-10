@@ -85,7 +85,7 @@ abstract class ColumnarOutputWriter(context: TaskAttemptContext,
     val fs = hadoopPath.getFileSystem(conf)
     val dos = fs.create(hadoopPath, false)
     if (asyncWriteEnabled) {
-      new AsyncOutputStream(dos)
+      new AsyncOutputStream(dos, 1) // TODO: make poolSize configurable
     } else {
       dos
     }

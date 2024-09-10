@@ -25,19 +25,20 @@ import scala.concurrent.{ExecutionContext, Future, Promise}
 
 import org.apache.spark.util.ThreadUtils
 
-abstract class Task(val streamId: Int, val weight: Int = 1) extends Runnable {
+/**
+ *
+ * @param streamId ID of the stream
+ */
+abstract class Task(val streamId: Int) extends Runnable {
   val promise: Promise[Unit] = Promise[Unit]()
 }
 
-// TODO: abstract it so that it can be used for writing HostMemoryBuffers? to perform the copy
-// from native memory to java heap memory asynchronously.
-// like, ByteBufferTask, HostMemoryBufferTask, etc.
-class WriteStreamTask(val b: Array[Byte], val off: Int, val len: Int, streamId: Int,
-    val sink: OutputStream) extends Task(streamId) {
+trait TrafficController {
+  def canAccept(task: Task): Boolean
+}
 
-  override def run(): Unit = {
-    sink.write(b, off, len)
-  }
+class AlwaysAcceptTrafficController extends TrafficController {
+  override def canAccept(task: Task): Boolean = true
 }
 
 /**
@@ -56,7 +57,7 @@ class WriteStreamTask(val b: Array[Byte], val off: Int, val len: Int, streamId: 
  *   - in-flight bytes in the queue
  *   - # of tasks processed, maybe for testing
  */
-object AsyncWriter extends AutoCloseable {
+class AsyncWriter(val poolSize: Int, name: Option[String] = None) extends AutoCloseable {
 
   // 1. FIFO processing of buffers
   // 2. the caller should be able to wait until all buffers are processed
@@ -66,12 +67,23 @@ object AsyncWriter extends AutoCloseable {
   // returned to the caller
   //  - I should not accept new tasks anymore from the failed caller in this case
 
-  private val poolSize = 1 // TODO: make it configurable
+  // TODO: make it configurable. defaulted to # of executors. should be passed in from the caller.
   private val executionContext = ExecutionContext.fromExecutorService(
-    ThreadUtils.newDaemonCachedThreadPool("async-writer", poolSize))
+    ThreadUtils.newDaemonCachedThreadPool(name.getOrElse("rapids-async-writer"), poolSize))
 
   private val lock: ReentrantLock = new ReentrantLock()
   private val condition: Condition = lock.newCondition()
+
+  // TODO: can I use a single data structure for tasks and streamToTasks?
+  // - the queue should be sorted by the priority
+  // - I should be able to easily navigate all the tasks of a particular stream
+
+
+  /**
+   * Tasks to process
+   */
+  @GuardedBy("lock")
+  private val tasks = new mutable.Queue[Task]()
 
   /**
    * Tasks that have not been processed yet
@@ -91,12 +103,6 @@ object AsyncWriter extends AutoCloseable {
   private val streamToErrors: mutable.Map[Int, Throwable] =
     new mutable.HashMap[Int, Throwable]()
 
-  /**
-   * Tasks to process
-   */
-  @GuardedBy("lock")
-  private val tasks = new mutable.Queue[Task]()
-
   @GuardedBy("lock")
   private var nextStreamId: Int = -1;
 
@@ -105,9 +111,9 @@ object AsyncWriter extends AutoCloseable {
 
   // TODO: throttling
 
-  executionContext.execute(() => processBuffers())
+  executionContext.execute(() => processTasks())
 
-  private def processBuffers(): Unit = {
+  private def processTasks(): Unit = {
     while (!isClosed) {
       // wait until buffers is not empty
       lock.lockInterruptibly()
@@ -142,7 +148,7 @@ object AsyncWriter extends AutoCloseable {
         if (task != null) {
           try {
             System.err.println("processing")
-            write(task)
+            process(task)
             task.promise.success({})
           } catch {
             case t: Throwable =>
@@ -198,7 +204,7 @@ object AsyncWriter extends AutoCloseable {
   }
 
   // TODO: maybe rename to newId or something
-  def register(): Int = {
+  def register(priority: Int = 0): Int = {
     lock.lockInterruptibly()
     try {
       val streamId = getNextStreamId
@@ -217,6 +223,9 @@ object AsyncWriter extends AutoCloseable {
     lock.lockInterruptibly()
     try {
       //    streamToFlushes.remove(streamId)
+      tasks.dequeueAll(t => t.streamId == streamId).foreach(t => t.promise.failure(
+        new IOException("Stream is deregistered")
+      ))
       streamToTasks.remove(streamId)
     } finally {
       lock.unlock()
@@ -224,7 +233,7 @@ object AsyncWriter extends AutoCloseable {
   }
 
   @throws[IOException]
-  private def write(b: Task): Unit = {
+  private def process(b: Task): Unit = {
     b.run()
   }
 
@@ -297,9 +306,14 @@ object AsyncWriter extends AutoCloseable {
   @throws[IOException]
   def flushAndCloseStream(streamId: Int): Unit = {
     // TODO: should be able to remove all buffers associated with a particular sink
-    val f = flush(streamId)
-    f.wait()
-    deregister(streamId)
+    lock.lockInterruptibly()
+    try {
+      val f = flush(streamId)
+      f.wait()
+      deregister(streamId)
+    } finally {
+      lock.unlock()
+    }
   }
 
   def cancelStream(streamId: Int): Unit = {
@@ -318,8 +332,13 @@ object AsyncWriter extends AutoCloseable {
 
   @throws[IOException]
   def cancelAndCloseStream(streamId: Int): Unit = {
-    cancelStream(streamId)
-    deregister(streamId)
+    lock.lockInterruptibly()
+    try {
+      cancelStream(streamId)
+      deregister(streamId)
+    } finally {
+      lock.unlock()
+    }
   }
 
   @throws[IOException]
@@ -328,6 +347,7 @@ object AsyncWriter extends AutoCloseable {
     try {
       if (!closed) {
         closed = true
+        tasks.foreach(task => task.promise.failure(new IOException("AsyncWriter closed")))
         tasks.clear()
         //      streamToFlushes.clear()
         streamToTasks.clear()
