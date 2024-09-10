@@ -88,7 +88,6 @@ class AsyncWriterSuite extends AnyFunSuite with BeforeAndAfterAll {
   test("test schedule multiple tasks for various streams and cancel one of them") {
     val id1 = asyncWriter.register()
     val id2 = asyncWriter.register()
-    System.err.println("id1: " + id1 + ", id2: " + id2)
     try {
       // Schedule 5 tasks with id1 and id2, respectively
       for (_ <- 0 until 5) {
@@ -119,7 +118,6 @@ class AsyncWriterSuite extends AnyFunSuite with BeforeAndAfterAll {
 
     val id1 = asyncWriter.register()
     val id2 = asyncWriter.register()
-    System.err.println("id1: " + id1 + ", id2: " + id2)
     try {
       for (i <- 0 until 10) {
         scheduleTask(new OrderedTask(id1, 100, i, q1))

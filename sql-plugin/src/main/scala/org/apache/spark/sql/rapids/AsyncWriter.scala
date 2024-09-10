@@ -18,10 +18,12 @@ package org.apache.spark.sql.rapids
 
 import java.io.{IOException, OutputStream}
 import java.util.concurrent.locks.{Condition, ReentrantLock}
+import java.util.concurrent.TimeUnit
 import javax.annotation.concurrent.GuardedBy
 
 import scala.collection.mutable
-import scala.concurrent.{ExecutionContext, Future, Promise}
+import scala.concurrent.{Await, ExecutionContext, Future, Promise}
+import scala.concurrent.duration.Duration
 
 import org.apache.spark.util.ThreadUtils
 
@@ -29,7 +31,7 @@ import org.apache.spark.util.ThreadUtils
  *
  * @param streamId ID of the stream
  */
-abstract class Task(val streamId: Int) extends Runnable {
+abstract class Task(val streamId: Int, val onSuccess: Runnable = () => {}) extends Runnable {
   val promise: Promise[Unit] = Promise[Unit]()
 }
 
@@ -118,7 +120,9 @@ class AsyncWriter(val poolSize: Int, name: Option[String] = None) extends AutoCl
       // wait until buffers is not empty
       lock.lockInterruptibly()
       try {
-        condition.await() // TODO: timeout?
+        if (tasks.isEmpty) {
+          condition.await(100, TimeUnit.MILLISECONDS) // TODO: timeout?
+        }
       } finally {
         lock.unlock()
       }
@@ -139,7 +143,7 @@ class AsyncWriter(val poolSize: Int, name: Option[String] = None) extends AutoCl
             if (!task.equals(buffersFromMap.head)) {
               throw new IllegalStateException("Buffer is not the same as the one in the map")
             }
-
+            buffersFromMap.dequeue()
           }
         } finally {
           lock.unlock()
@@ -147,11 +151,12 @@ class AsyncWriter(val poolSize: Int, name: Option[String] = None) extends AutoCl
 
         if (task != null) {
           try {
-            System.err.println("processing")
             process(task)
             task.promise.success({})
+            task.onSuccess.run()
           } catch {
             case t: Throwable =>
+              System.err.println("error while processing a task: " + t.getMessage)
               lock.lockInterruptibly()
               try {
                 streamToErrors.put(task.streamId, t)
@@ -169,12 +174,12 @@ class AsyncWriter(val poolSize: Int, name: Option[String] = None) extends AutoCl
             //                new RuntimeException("Failed because of previous error")
             //              ))
           } finally {
-            lock.lockInterruptibly()
-            try {
-              buffersFromMap.dequeue()
-            } finally {
-              lock.unlock()
-            }
+//            lock.lockInterruptibly()
+//            try {
+//              buffersFromMap.dequeue()
+//            } finally {
+//              lock.unlock()
+//            }
           }
         }
 
@@ -240,7 +245,6 @@ class AsyncWriter(val poolSize: Int, name: Option[String] = None) extends AutoCl
   // TODO: should this be blocking when the buffer size exceeds the limit?
   def schedule(task: Task): Option[Future[Unit]] = {
     lock.lockInterruptibly()
-    System.err.println("scheduling")
     try {
       streamToErrors.get(task.streamId) match {
         case Some(t) =>
@@ -270,7 +274,6 @@ class AsyncWriter(val poolSize: Int, name: Option[String] = None) extends AutoCl
       // the caller should wait until all tasks are done.
       val streamBuffers = streamToTasks.getOrElseUpdate(streamId,
         throw new IllegalStateException(s"Stream id $streamId is not registered"))
-      System.err.println("flushing " + streamBuffers.size)
       if (streamBuffers.isEmpty) {
         Future.successful({})
       } else {
@@ -309,7 +312,7 @@ class AsyncWriter(val poolSize: Int, name: Option[String] = None) extends AutoCl
     lock.lockInterruptibly()
     try {
       val f = flush(streamId)
-      f.wait()
+      Await.ready(f, Duration.Inf)
       deregister(streamId)
     } finally {
       lock.unlock()

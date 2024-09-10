@@ -27,19 +27,43 @@ import scala.concurrent.duration.Duration
  * TODO: not thread-safe
  */
 class AsyncOutputStream(val delegate: OutputStream, poolSize: Int) extends OutputStream {
+  // TODO: should take AsyncWriter as a parameter
   private val asyncWriter = new AsyncWriter(poolSize)
   private val streamId = asyncWriter.register()
 
   private var closed = false
 
-  // TODO: abstract it so that it can be used for writing HostMemoryBuffers? to perform the copy
-  // from native memory to java heap memory asynchronously.
-  // like, ByteBufferTask, HostMemoryBufferTask, etc.
-  private class WriteStreamTask(val b: Array[Byte], val off: Int, val len: Int, streamId: Int)
-    extends Task(streamId) {
+  private class Metrics {
+    var numBytesScheduled: Long = 0
+    var numBytesWritten: Long = 0
+  }
+
+  private val metrics = new Metrics
+
+  private var flushTaskId: Int = 0
+
+  private def newTaskId: Int = {
+    flushTaskId += 1
+    flushTaskId
+  }
+
+  private class WriteTask(val b: Array[Byte], val off: Int, val len: Int, streamId: Int,
+      taskId: Int)
+    extends Task(streamId, () => {
+      metrics.numBytesWritten += len
+      System.err.println("written for taskId: " + taskId)
+    }) {
 
     override def run(): Unit = {
+      System.err.println("flushing for taskId: " + taskId)
       delegate.write(b, off, len)
+    }
+  }
+
+  private class FlushTask(streamId: Int) extends Task(streamId) {
+
+    override def run(): Unit = {
+      delegate.flush()
     }
   }
 
@@ -57,7 +81,8 @@ class AsyncOutputStream(val delegate: OutputStream, poolSize: Int) extends Outpu
     throwIfError()
     ensureOpen()
 
-    val scheduleResult = asyncWriter.schedule(new WriteStreamTask(b, off, len, streamId))
+    metrics.numBytesScheduled += len
+    val scheduleResult = asyncWriter.schedule(new WriteTask(b, off, len, streamId, newTaskId))
     scheduleResult match {
       case None => // TODO: wait and retry
       case _ => // do nothing
@@ -69,8 +94,11 @@ class AsyncOutputStream(val delegate: OutputStream, poolSize: Int) extends Outpu
     throwIfError()
     ensureOpen()
 
-    val flushing = asyncWriter.flush(streamId)
-    Await.ready(flushing, Duration.Undefined)
+    val scheduleResult = asyncWriter.schedule(new FlushTask(streamId))
+    scheduleResult match {
+      case None => throw new IOException("Failed to schedule flush")
+      case Some(flushing) => Await.ready(flushing, Duration.Inf) // TODO: maybe timeout
+    }
   }
 
   @throws[IOException]
@@ -78,8 +106,13 @@ class AsyncOutputStream(val delegate: OutputStream, poolSize: Int) extends Outpu
     throwIfError()
 
     if (!closed) {
-      asyncWriter.flushAndCloseStream(streamId)
+      flush()
+      asyncWriter.deregister(streamId)
+      asyncWriter.close()
+      delegate.close() // TODO: safeClose
       closed = true
+      System.err.println("numBytesScheduled: " + metrics.numBytesScheduled)
+      System.err.println("numBytesWritten: " + metrics.numBytesWritten)
     }
   }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2022, NVIDIA CORPORATION.
+ * Copyright (c) 2019-2024, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,9 +39,11 @@ import org.apache.spark.sql.rapids.shims.SparkUpgradeExceptionShims
 )
 class ParquetWriterSuite extends SparkQueryCompareTestSuite {
   test("file metadata") {
+    val conf = new SparkConf().set(RapidsConf.SQL_ENABLED.key, "true")
+      .set(RapidsConf.ENABLE_ASYNC_OUTPUT_WRITE.key, "true")
     val tempFile = File.createTempFile("stats", ".parquet")
     try {
-      withGpuSparkSession(spark => {
+      SparkSessionHolder.withSparkSession(conf, spark => {
         val df = mixedDfWithNulls(spark)
         df.write.mode("overwrite").parquet(tempFile.getAbsolutePath)
 
@@ -88,7 +90,9 @@ class ParquetWriterSuite extends SparkQueryCompareTestSuite {
 
   test("sorted partitioned write") {
     val conf = new SparkConf().set(RapidsConf.SQL_ENABLED.key, "true")
+//      .set(RapidsConf.ENABLE_ASYNC_OUTPUT_WRITE.key, "true")
     val tempFile = File.createTempFile("partitioned", ".parquet")
+    System.err.println("file: " + tempFile.getAbsolutePath)
     try {
       SparkSessionHolder.withSparkSession(conf, spark => {
         import spark.implicits._
@@ -100,7 +104,7 @@ class ParquetWriterSuite extends SparkQueryCompareTestSuite {
         assertResult("0000000001")(firstRow.getString(0))
       })
     } finally {
-      fullyDelete(tempFile)
+//      fullyDelete(tempFile)
     }
   }
 
@@ -120,6 +124,7 @@ class ParquetWriterSuite extends SparkQueryCompareTestSuite {
     val conf = new SparkConf()
         .set("spark.sql.files.maxRecordsPerFile", "50")
         .set(RapidsConf.SQL_ENABLED.key, "true")
+      .set(RapidsConf.ENABLE_ASYNC_OUTPUT_WRITE.key, "true")
     val tempFile = File.createTempFile("maxRecords", ".parquet")
     val assertRowCount50 = assertResult(50) _
 
@@ -146,6 +151,7 @@ class ParquetWriterSuite extends SparkQueryCompareTestSuite {
         .set("spark.rapids.sql.batchSizeBytes", "1") // forces multiple batches per partition
         .set("spark.sql.files.maxRecordsPerFile", "50")
         .set(RapidsConf.SQL_ENABLED.key, "true")
+      .set(RapidsConf.ENABLE_ASYNC_OUTPUT_WRITE.key, "true")
     val tempFile = File.createTempFile("maxRecords", ".parquet")
     val assertRowCount50 = assertResult(50) _
 
@@ -176,6 +182,7 @@ class ParquetWriterSuite extends SparkQueryCompareTestSuite {
         .set("spark.sql.files.maxRecordsPerFile", maxRecordsPerFile)
         .set("spark.sql.maxConcurrentOutputFileWriters", "30")
         .set(RapidsConf.SQL_ENABLED.key, "true")
+        .set(RapidsConf.ENABLE_ASYNC_OUTPUT_WRITE.key, "true")
       try {
         SparkSessionHolder.withSparkSession(conf, spark => {
           import spark.implicits._
@@ -211,6 +218,7 @@ class ParquetWriterSuite extends SparkQueryCompareTestSuite {
           .set("spark.sql.files.maxRecordsPerFile", maxRecordsPerFile)
           .set("spark.sql.maxConcurrentOutputFileWriters", "10")
           .set(RapidsConf.SQL_ENABLED.key, "true")
+        .set(RapidsConf.ENABLE_ASYNC_OUTPUT_WRITE.key, "true")
       try {
         SparkSessionHolder.withSparkSession(conf, spark => {
           import spark.implicits._
@@ -241,7 +249,8 @@ class ParquetWriterSuite extends SparkQueryCompareTestSuite {
     "Old dates in EXCEPTION mode",
     SparkUpgradeExceptionShims.getSparkUpgradeExceptionClass,
     oldDatesDf,
-    new SparkConf().set("spark.sql.legacy.parquet.datetimeRebaseModeInWrite", "EXCEPTION")) {
+    new SparkConf().set("spark.sql.legacy.parquet.datetimeRebaseModeInWrite", "EXCEPTION")
+      .set(RapidsConf.ENABLE_ASYNC_OUTPUT_WRITE.key, "true")) {
     val tempFile = File.createTempFile("oldDates", "parquet")
     tempFile.delete()
     frame => {
@@ -257,7 +266,8 @@ class ParquetWriterSuite extends SparkQueryCompareTestSuite {
     oldTsDf,
     new SparkConf()
       .set("spark.sql.legacy.parquet.datetimeRebaseModeInWrite", "EXCEPTION")
-      .set("spark.sql.parquet.outputTimestampType", "TIMESTAMP_MILLIS")) {
+      .set("spark.sql.parquet.outputTimestampType", "TIMESTAMP_MILLIS")
+      .set(RapidsConf.ENABLE_ASYNC_OUTPUT_WRITE.key, "true")) {
     val tempFile = File.createTempFile("oldTimeStamp", "parquet")
     tempFile.delete()
     frame => {
@@ -272,7 +282,8 @@ class ParquetWriterSuite extends SparkQueryCompareTestSuite {
     oldTsDf,
     new SparkConf()
       .set("spark.sql.legacy.parquet.datetimeRebaseModeInWrite", "EXCEPTION")
-      .set("spark.sql.parquet.outputTimestampType", "TIMESTAMP_MICROS")) {
+      .set("spark.sql.parquet.outputTimestampType", "TIMESTAMP_MICROS")
+      .set(RapidsConf.ENABLE_ASYNC_OUTPUT_WRITE.key, "true")) {
     val tempFile = File.createTempFile("oldTimeStamp", "parquet")
     tempFile.delete()
     frame => {
