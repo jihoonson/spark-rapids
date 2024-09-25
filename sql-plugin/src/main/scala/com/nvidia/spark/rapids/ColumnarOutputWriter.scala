@@ -28,8 +28,8 @@ import com.nvidia.spark.rapids.RmmRapidsRetryIterator.{splitSpillableInHalfByRow
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapreduce.TaskAttemptContext
-import org.apache.spark.TaskContext
 
+import org.apache.spark.TaskContext
 import org.apache.spark.sql.rapids.{AsyncOutputStream, ColumnarWriteTaskStatsTracker, GpuWriteTaskStatsTracker}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.vectorized.ColumnarBatch
@@ -83,6 +83,7 @@ abstract class ColumnarOutputWriter(context: TaskAttemptContext,
   protected def getOutputStream: OutputStream = {
     val hadoopPath = new Path(path)
     val fs = hadoopPath.getFileSystem(conf)
+    // TODO: should be able to create the file asynchronously
     val dos = fs.create(hadoopPath, false)
     if (asyncWriteEnabled) {
       new AsyncOutputStream(dos, 1) // TODO: make poolSize configurable

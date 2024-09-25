@@ -16,9 +16,9 @@
 
 package org.apache.spark.sql.rapids
 
-import java.io.{IOException, OutputStream}
-import java.util.concurrent.locks.{Condition, ReentrantLock}
+import java.io.IOException
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.{Condition, ReentrantLock}
 import javax.annotation.concurrent.GuardedBy
 
 import scala.collection.mutable
