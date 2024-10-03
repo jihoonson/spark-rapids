@@ -2394,7 +2394,7 @@ val SHUFFLE_COMPRESSION_LZ4_CHUNK_SIZE = conf("spark.rapids.shuffle.compression.
       .doc("Option to turn on the async ouptut write. ")
       .internal()
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   private def printSectionHeader(category: String): Unit =
     println(s"\n### $category")

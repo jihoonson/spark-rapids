@@ -30,6 +30,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapreduce.TaskAttemptContext
 
 import org.apache.spark.TaskContext
+import org.apache.spark.internal.Logging
 import org.apache.spark.sql.rapids.{AsyncOutputStream, ColumnarWriteTaskStatsTracker, GpuWriteTaskStatsTracker}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.vectorized.ColumnarBatch
@@ -72,7 +73,7 @@ abstract class ColumnarOutputWriter(context: TaskAttemptContext,
     rangeName: String,
     includeRetry: Boolean,
     asyncWriteEnabled: Boolean = false,
-    releaseSemaphoreIntermittently: Boolean = false) extends HostBufferConsumer {
+    releaseSemaphoreIntermittently: Boolean = false) extends HostBufferConsumer with Logging {
 
   protected val tableWriter: TableWriter
 
@@ -86,7 +87,8 @@ abstract class ColumnarOutputWriter(context: TaskAttemptContext,
     // TODO: should be able to create the file asynchronously
     val dos = fs.create(hadoopPath, false)
     if (asyncWriteEnabled) {
-      new AsyncOutputStream(dos, 1) // TODO: make poolSize configurable
+      logDebug("Async write enabled")
+      new AsyncOutputStream(dos) // TODO: make poolSize configurable
     } else {
       dos
     }
@@ -176,6 +178,7 @@ abstract class ColumnarOutputWriter(context: TaskAttemptContext,
     // the buffered data to the FS
     // TODO: config to release semaphore
     if (releaseSemaphoreIntermittently) {
+      logDebug("Releasing semaphore intermittently")
       GpuSemaphore.releaseIfNecessary(TaskContext.get)
     }
 

@@ -26,9 +26,9 @@ import scala.concurrent.duration.Duration
  *
  * TODO: not thread-safe
  */
-class AsyncOutputStream(val delegate: OutputStream, poolSize: Int) extends OutputStream {
+class AsyncOutputStream(val delegate: OutputStream) extends OutputStream {
   // TODO: should take AsyncWriter as a parameter
-  private val asyncWriter = new AsyncWriter(poolSize)
+  private val asyncWriter = AsyncWriter.asyncOutputWriter
   private val streamId = asyncWriter.register()
 
   private var closed = false
@@ -51,11 +51,11 @@ class AsyncOutputStream(val delegate: OutputStream, poolSize: Int) extends Outpu
       taskId: Int)
     extends Task(streamId, () => {
       metrics.numBytesWritten += len
-      System.err.println("written for taskId: " + taskId)
+//      System.err.println("written for taskId: " + taskId)
     }) {
 
     override def run(): Unit = {
-      System.err.println("flushing for taskId: " + taskId)
+//      System.err.println("flushing for taskId: " + taskId)
       delegate.write(b, off, len)
     }
   }
@@ -108,11 +108,10 @@ class AsyncOutputStream(val delegate: OutputStream, poolSize: Int) extends Outpu
     if (!closed) {
       flush()
       asyncWriter.deregister(streamId)
-      asyncWriter.close()
       delegate.close() // TODO: safeClose
       closed = true
-      System.err.println("numBytesScheduled: " + metrics.numBytesScheduled)
-      System.err.println("numBytesWritten: " + metrics.numBytesWritten)
+//      System.err.println("numBytesScheduled: " + metrics.numBytesScheduled)
+//      System.err.println("numBytesWritten: " + metrics.numBytesWritten)
     }
   }
 

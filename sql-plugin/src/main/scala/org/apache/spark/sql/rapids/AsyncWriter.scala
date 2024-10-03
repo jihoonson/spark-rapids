@@ -43,6 +43,10 @@ class AlwaysAcceptTrafficController extends TrafficController {
   override def canAccept(task: Task): Boolean = true
 }
 
+object AsyncWriter {
+  val asyncOutputWriter = new AsyncWriter(1)
+}
+
 /**
  * A service that performs write tasks asynchronously. Callers should register themselves before
  * they submit tasks. The service processes tasks based on their priority. When an error occurs,
@@ -58,6 +62,7 @@ class AlwaysAcceptTrafficController extends TrafficController {
  *   - # of tasks in the queue
  *   - in-flight bytes in the queue
  *   - # of tasks processed, maybe for testing
+ * TODO: need an AsyncWriterRegistry to manage multiple AsyncWriters for different purposes
  */
 class AsyncWriter(val poolSize: Int, name: Option[String] = None) extends AutoCloseable {
 

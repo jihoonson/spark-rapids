@@ -27,7 +27,7 @@ import org.scalatest.funsuite.AnyFunSuite
 class AsyncWriterSuite extends AnyFunSuite with BeforeAndAfterAll {
 
   // TODO: close after all tests
-  var asyncWriter: AsyncWriter = null
+  var asyncWriter: AsyncWriter = _
 
   override def beforeAll(): Unit = {
     asyncWriter = new AsyncWriter(2)
