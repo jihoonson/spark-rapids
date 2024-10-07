@@ -31,16 +31,32 @@ import org.apache.spark.util.ThreadUtils
  *
  * @param streamId ID of the stream
  */
-abstract class Task(val streamId: Int, val onSuccess: Runnable = () => {}) extends Runnable {
+abstract class Task(val streamId: Int, val weight: Long, val onSuccess: Runnable = () => {})
+  extends Runnable {
   val promise: Promise[Unit] = Promise[Unit]()
 }
 
-trait TrafficController {
-  def canAccept(task: Task): Boolean
+trait TrafficController[T <: Task] {
+  def canAccept(task: T): Boolean
 }
 
-class AlwaysAcceptTrafficController extends TrafficController {
+class AlwaysAcceptTrafficController extends TrafficController[Task] {
   override def canAccept(task: Task): Boolean = true
+}
+
+class WeightLimiter(val limitBytes: Long)
+  extends TrafficController[Task] {
+
+  private var inFlightBytes: Long = 0
+
+  override def canAccept(task: Task): Boolean = {
+    if (inFlightBytes + task.weight <= limitBytes) {
+      inFlightBytes += task.weight
+      true
+    } else {
+      false
+    }
+  }
 }
 
 object AsyncWriter {
@@ -116,7 +132,10 @@ class AsyncWriter(val poolSize: Int, name: Option[String] = None) extends AutoCl
   @GuardedBy("lock")
   private var closed = false
 
-  // TODO: throttling
+  @GuardedBy("lock")
+  private val trafficController: TrafficController[Task] =
+    new AlwaysAcceptTrafficController
+//    new WeightLimiter(1024 * 1024 * 1024)
 
   executionContext.execute(() => processTasks())
 
@@ -141,7 +160,6 @@ class AsyncWriter(val poolSize: Int, name: Option[String] = None) extends AutoCl
         try {
           continue = !closed && tasks.nonEmpty
           if (continue) {
-            // TODO: I should release the lock and re-acquire it before processing the buffers
             task = tasks.dequeue()
             buffersFromMap = streamToTasks.getOrElseUpdate(task.streamId,
               throw new IllegalStateException(s"Stream id ${task.streamId} is not registered"))
@@ -258,18 +276,22 @@ class AsyncWriter(val poolSize: Int, name: Option[String] = None) extends AutoCl
         case None =>
       }
 
-      // TODO: should check the in-flight buffer size and return None if it exceeds the limit
-      val streamBuffers = streamToTasks.getOrElseUpdate(task.streamId,
-        throw new IllegalStateException(s"Stream id $task.streamId is not registered"))
-      streamBuffers += task
-      tasks += task
-      condition.signalAll()
-      Some(task.promise.future)
+      if (trafficController.canAccept(task)) {
+        val streamBuffers = streamToTasks.getOrElseUpdate(task.streamId,
+          throw new IllegalStateException(s"Stream id $task.streamId is not registered"))
+        streamBuffers += task
+        tasks += task
+        condition.signalAll()
+        Some(task.promise.future)
+      } else {
+        None
+      }
     } finally {
       lock.unlock()
     }
   }
 
+  // TODO: rename to lastTaskFuture or something/**/
   @throws[IOException]
   def flush(streamId: Int): Future[Unit] = {
     lock.lockInterruptibly()

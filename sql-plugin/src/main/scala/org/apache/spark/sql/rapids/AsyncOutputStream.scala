@@ -49,7 +49,7 @@ class AsyncOutputStream(val delegate: OutputStream) extends OutputStream {
 
   private class WriteTask(val b: Array[Byte], val off: Int, val len: Int, streamId: Int,
       taskId: Int)
-    extends Task(streamId, () => {
+    extends Task(streamId, len, () => {
       metrics.numBytesWritten += len
 //      System.err.println("written for taskId: " + taskId)
     }) {
@@ -60,7 +60,7 @@ class AsyncOutputStream(val delegate: OutputStream) extends OutputStream {
     }
   }
 
-  private class FlushTask(streamId: Int) extends Task(streamId) {
+  private class FlushTask(streamId: Int) extends Task(streamId, 0) {
 
     override def run(): Unit = {
       delegate.flush()

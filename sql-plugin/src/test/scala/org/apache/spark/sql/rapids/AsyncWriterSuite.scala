@@ -37,7 +37,7 @@ class AsyncWriterSuite extends AnyFunSuite with BeforeAndAfterAll {
     asyncWriter.close()
   }
 
-  class SleepTask(id: Int, durationMs: Long) extends Task(id) {
+  class SleepTask(id: Int, durationMs: Long) extends Task(id, 0) {
 
     override def run(): Unit = {
       System.err.println(s"Task $id sleeping for $durationMs ms")
@@ -122,7 +122,7 @@ class AsyncWriterSuite extends AnyFunSuite with BeforeAndAfterAll {
 
   test("test processing tasks in order") {
     class OrderedTask(id: Int, durationMs: Long, ordinal: Int, q: ConcurrentLinkedDeque[Int])
-      extends Task(id) {
+      extends Task(id, 0) {
       override def run(): Unit = {
         Thread.sleep(durationMs)
         assert(q.offer(ordinal))

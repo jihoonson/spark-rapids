@@ -34,7 +34,7 @@ class AsyncWriterConcurrencySuite extends AnyFunSuite with BeforeAndAfterAll
     asyncWriter.deregister(writerId)
   }
 
-  class SleepTask(id: Int, durationMs: Long) extends Task(id) {
+  class SleepTask(id: Int, durationMs: Long) extends Task(id, 0) {
 
     override def run(): Unit = {
       System.err.println(s"Task $id sleeping for $durationMs ms")
