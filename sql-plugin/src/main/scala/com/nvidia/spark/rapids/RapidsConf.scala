@@ -798,6 +798,13 @@ val GPU_COREDUMP_PIPE_PATTERN = conf("spark.rapids.gpu.coreDump.pipePattern")
     .bytesConf(ByteUnit.BYTE)
     .createWithDefault(8 * 1024 * 1024)
 
+  val TRACE_SEMAPHORE_ACTIVITY = conf("spark.rapids.sql.trace.gpu.semaphore.activity")
+    .doc("Enable tracing of GPU semaphore activity. This can be useful for debugging " +
+      "deadlocks and other issues related to GPU semaphore.")
+    .internal()
+    .booleanConf
+    .createWithDefault(false)
+
   // ENABLE/DISABLE PROCESSING
 
   val SQL_ENABLED = conf("spark.rapids.sql.enabled")

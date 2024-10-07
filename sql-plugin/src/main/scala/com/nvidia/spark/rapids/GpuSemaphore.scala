@@ -179,6 +179,7 @@ private final class SemaphoreTaskInfo(val taskAttemptId: Long) extends Logging {
    */
   private val activeThreads = new util.LinkedHashSet[Thread]()
   private lazy val numPermits = GpuSemaphore.computeNumPermits(SQLConf.get)
+  private lazy val trackSemaphore = SQLConf.get.getConf(RapidsConf.TRACE_SEMAPHORE_ACTIVITY.key)
   /**
    * If this task holds the GPU semaphore or not.
    */
@@ -260,8 +261,10 @@ private final class SemaphoreTaskInfo(val taskAttemptId: Long) extends Logging {
             // We now own the semaphore so we need to wake up all of the other tasks that are
             // waiting.
             hasSemaphore = true
-            nvtxRange =
-              Some(new NvtxUniqueRange(s"semaphore-${taskAttemptId}", NvtxColor.ORANGE))
+            if (trackSemaphore) {
+              nvtxRange =
+                Some(new NvtxUniqueRange(s"semaphore-${taskAttemptId}", NvtxColor.ORANGE))
+            }
             moveToActive(t)
             notifyAll()
             done = true
