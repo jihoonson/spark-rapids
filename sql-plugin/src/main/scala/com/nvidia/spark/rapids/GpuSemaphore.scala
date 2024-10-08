@@ -179,7 +179,7 @@ private final class SemaphoreTaskInfo(val taskAttemptId: Long) extends Logging {
    */
   private val activeThreads = new util.LinkedHashSet[Thread]()
   private lazy val numPermits = GpuSemaphore.computeNumPermits(SQLConf.get)
-  private lazy val trackSemaphore = SQLConf.get.getConf(RapidsConf.TRACE_SEMAPHORE_ACTIVITY.key)
+  private lazy val trackSemaphore = RapidsConf.TRACE_SEMAPHORE_ACTIVITY.get(SQLConf.get)
   /**
    * If this task holds the GPU semaphore or not.
    */
