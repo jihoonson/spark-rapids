@@ -2403,6 +2403,12 @@ val SHUFFLE_COMPRESSION_LZ4_CHUNK_SIZE = conf("spark.rapids.shuffle.compression.
       .booleanConf
       .createWithDefault(true)
 
+  val OUTPUT_WRITE_DELAY_MS = conf("spark.rapids.sql.outputWrite.delayMs")
+    .doc("The delay time in milliseconds for async output write.")
+    .internal()
+    .longConf
+    .createWithDefault(0)
+
   private def printSectionHeader(category: String): Unit =
     println(s"\n### $category")
 

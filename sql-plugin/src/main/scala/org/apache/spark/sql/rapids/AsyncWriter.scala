@@ -145,7 +145,7 @@ class AsyncWriter(val poolSize: Int, name: Option[String] = None) extends AutoCl
       lock.lockInterruptibly()
       try {
         if (tasks.isEmpty) {
-          condition.await(100, TimeUnit.MILLISECONDS) // TODO: timeout?
+          condition.await(10, TimeUnit.MILLISECONDS) // TODO: timeout?
         }
       } finally {
         lock.unlock()
@@ -291,7 +291,7 @@ class AsyncWriter(val poolSize: Int, name: Option[String] = None) extends AutoCl
     }
   }
 
-  // TODO: rename to lastTaskFuture or something/**/
+  // TODO: rename to lastTaskFuture or something
   @throws[IOException]
   def flush(streamId: Int): Future[Unit] = {
     lock.lockInterruptibly()

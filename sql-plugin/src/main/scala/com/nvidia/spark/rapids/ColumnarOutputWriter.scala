@@ -73,11 +73,33 @@ abstract class ColumnarOutputWriter(context: TaskAttemptContext,
     rangeName: String,
     includeRetry: Boolean,
     asyncWriteEnabled: Boolean = false,
-    releaseSemaphoreIntermittently: Boolean = false) extends HostBufferConsumer with Logging {
+    releaseSemaphoreIntermittently: Boolean = false,
+    delayMs: Long = 0) extends HostBufferConsumer with Logging {
 
   protected val tableWriter: TableWriter
 
   protected val conf: Configuration = context.getConfiguration
+
+  private class DelayingOutputStream(delegate: OutputStream, delayMs: Long) extends OutputStream {
+
+    override def write(i: Int): Unit = {
+      Thread.sleep(delayMs)
+      delegate.write(i)
+    }
+
+    override def write(b: Array[Byte], off: Int, len: Int): Unit = {
+      Thread.sleep(delayMs)
+      delegate.write(b, off, len)
+    }
+
+    override def flush(): Unit = {
+      delegate.flush()
+    }
+
+    override def close(): Unit = {
+      delegate.close()
+    }
+  }
 
   // This is implemented as a method to make it easier to subclass
   // ColumnarOutputWriter in the tests, and override this behavior.
@@ -85,7 +107,11 @@ abstract class ColumnarOutputWriter(context: TaskAttemptContext,
     val hadoopPath = new Path(path)
     val fs = hadoopPath.getFileSystem(conf)
     // TODO: should be able to create the file asynchronously
-    val dos = fs.create(hadoopPath, false)
+    var dos: OutputStream = fs.create(hadoopPath, false)
+    if (delayMs > 0) {
+      logDebug("Delaying write by " + delayMs + "ms")
+      dos = new DelayingOutputStream(dos, delayMs)
+    }
     if (asyncWriteEnabled) {
       logDebug("Async write enabled")
       new AsyncOutputStream(dos) // TODO: make poolSize configurable
