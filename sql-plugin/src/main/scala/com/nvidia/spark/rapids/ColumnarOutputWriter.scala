@@ -108,11 +108,11 @@ abstract class ColumnarOutputWriter(context: TaskAttemptContext,
     // TODO: should be able to create the file asynchronously
     var dos: OutputStream = fs.create(hadoopPath, false)
     if (delayMs > 0) {
-      logDebug("Delaying write by " + delayMs + "ms")
+      logError("Delaying write by " + delayMs + "ms")
       dos = new DelayingOutputStream(dos, delayMs)
     }
     if (asyncWriteEnabled) {
-      logDebug("Async write enabled")
+      logError("Async write enabled")
       new AsyncOutputStream(dos) // TODO: make poolSize configurable
     } else {
       dos

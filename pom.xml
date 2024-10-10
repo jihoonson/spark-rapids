@@ -874,6 +874,7 @@
         <build.info.path>${project.build.outputDirectory}/rapids4spark-version-info.properties</build.info.path>
         <nonfail.errors.quiet>false</nonfail.errors.quiet>
         <rapids.source.jar.phase>package</rapids.source.jar.phase>
+        <jmh.version>1.37</jmh.version>
     </properties>
 
     <dependencyManagement>
