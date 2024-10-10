@@ -83,7 +83,6 @@ abstract class ColumnarOutputWriter(context: TaskAttemptContext,
   private class DelayingOutputStream(delegate: OutputStream, delayMs: Long) extends OutputStream {
 
     override def write(i: Int): Unit = {
-      Thread.sleep(delayMs)
       delegate.write(i)
     }
 
