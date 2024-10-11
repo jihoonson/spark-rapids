@@ -28,7 +28,7 @@ import scala.concurrent.duration.Duration
  */
 class AsyncOutputStream(val delegate: OutputStream) extends OutputStream {
   // TODO: should take AsyncWriter as a parameter
-  private val asyncWriter = AsyncWriter.asyncOutputWriter
+  private val asyncWriter = AsyncWriter2.asyncOutputWriter
   private val streamId = asyncWriter.register()
 
   private var closed = false
