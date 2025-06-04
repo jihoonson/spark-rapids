@@ -255,7 +255,7 @@ def pytest_runtest_setup(item):
 
     if non_gpu_conditional:
         condition = non_gpu_conditional.args[0]
-        _non_gpu_allowed_conditional = non_gpu_conditional.args[1]
+        _non_gpu_allowed_conditional = non_gpu_conditional.args[1:]
         if not isinstance(condition, bool):
             raise ValueError("The first parameter of 'allow_non_gpu_conditional' must be a Boolean.")
         if condition:
@@ -276,7 +276,7 @@ def pytest_runtest_setup(item):
     elif _non_gpu_allowed_databricks:
         _non_gpu_allowed = _non_gpu_allowed_databricks
     if _non_gpu_allowed_conditional:
-        _non_gpu_allowed = _non_gpu_allowed + tuple(_non_gpu_allowed_conditional.split(","))
+        _non_gpu_allowed = _non_gpu_allowed + _non_gpu_allowed_conditional
 
     global _validate_execs_in_gpu_plan
     validate_execs = item.get_closest_marker('validate_execs_in_gpu_plan')

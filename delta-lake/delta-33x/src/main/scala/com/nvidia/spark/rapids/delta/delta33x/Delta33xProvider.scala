@@ -16,7 +16,7 @@
 
 package com.nvidia.spark.rapids.delta.delta33x
 
-import com.nvidia.spark.rapids.{AtomicCreateTableAsSelectExecMeta, AtomicReplaceTableAsSelectExecMeta, GpuExec, GpuOverrides, RunnableCommandRule}
+import com.nvidia.spark.rapids.{AppendDataExecV1Meta, AtomicCreateTableAsSelectExecMeta, AtomicReplaceTableAsSelectExecMeta, GpuExec, GpuOverrides, RunnableCommandRule}
 import com.nvidia.spark.rapids.{GpuReadParquetFileFormat, SparkPlanMeta}
 import com.nvidia.spark.rapids.delta.DeltaIOProvider
 
@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.commands.MergeIntoCommand
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.datasources.{FileFormat, HadoopFsRelation}
-import org.apache.spark.sql.execution.datasources.v2.{AtomicCreateTableAsSelectExec, AtomicReplaceTableAsSelectExec}
+import org.apache.spark.sql.execution.datasources.v2.{AppendDataExecV1, AtomicCreateTableAsSelectExec, AtomicReplaceTableAsSelectExec}
 
 object Delta33xProvider extends DeltaIOProvider {
 
@@ -76,13 +76,25 @@ object Delta33xProvider extends DeltaIOProvider {
     throw new UnsupportedOperationException("Not implemented")
   }
 
-  override def tagForGpu(cpuExec: AtomicCreateTableAsSelectExec,
+  override def convertToGpu(
+      cpuExec: AppendDataExecV1,
+      meta: AppendDataExecV1Meta): GpuExec = {
+    throw new UnsupportedOperationException("Not implemented conversion for AppendDataExecV1")
+  }
+
+    override def tagForGpu(cpuExec: AtomicCreateTableAsSelectExec,
     meta: AtomicCreateTableAsSelectExecMeta): Unit = {
     meta.willNotWorkOnGpu("Delta write is not supported at the moment")
   }
 
   override def tagForGpu(cpuExec: AtomicReplaceTableAsSelectExec,
     meta: AtomicReplaceTableAsSelectExecMeta): Unit = {
+    meta.willNotWorkOnGpu("Delta write is not supported at the moment")
+  }
+
+  override def tagForGpu(
+      cpuExec: AppendDataExecV1,
+      meta: AppendDataExecV1Meta): Unit = {
     meta.willNotWorkOnGpu("Delta write is not supported at the moment")
   }
 
