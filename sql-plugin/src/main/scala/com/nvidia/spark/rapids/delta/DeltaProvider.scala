@@ -95,6 +95,8 @@ trait DeltaProvider {
 
   def pruneFileMetadata(plan: SparkPlan): SparkPlan = plan
 
+  def pushFilterDownToScan(plan: SparkPlan): SparkPlan = plan
+
   def isDVScan(meta: SparkPlanMeta[FileSourceScanExec]): Boolean = false
 }
 

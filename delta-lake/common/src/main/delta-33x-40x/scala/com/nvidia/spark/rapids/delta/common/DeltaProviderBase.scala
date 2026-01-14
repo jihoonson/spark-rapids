@@ -136,7 +136,17 @@ abstract class DeltaProviderBase extends DeltaIOProvider {
       InvalidateCacheShims.getInvalidateCache(cpuExec.invalidateCache))
   }
 
+  override def pushFilterDownToScan(plan: SparkPlan): SparkPlan = {
+    plan.transformUp {
+      case _ @ GpuFilterExec(condition,
+      dvFilterInput @ GpuProjectExec(_, _: GpuFileSourceScanExec, _))
+        if condition.references.exists(_.name == IS_ROW_DELETED_COLUMN_NAME) =>
+      dvFilterInput
+//        dvFilterInput.copy(projectList = inputList.filter(_.name == IS_ROW_DELETED_COLUMN_NAME))
+    }
+  }
 
+  // TODO: fix this if "is_row_deleted" is pushed down to scan
   override def pruneFileMetadata(plan: SparkPlan): SparkPlan = {
     plan match {
       // This logic is a special case of eliminating of unused columns.

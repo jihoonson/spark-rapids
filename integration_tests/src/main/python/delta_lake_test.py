@@ -91,13 +91,25 @@ def test_delta_scan_read(spark_tmp_path):
                     reason="Delta Lake deletion vector support is required")
 def test_delta_deletion_vector_read(spark_tmp_path, use_cdf):
     data_path = spark_tmp_path + "/DELTA_DATA"
-    conf = {"spark.databricks.delta.delete.deletionVectors.persistent": "true"}
+    conf = {"spark.databricks.delta.delete.deletionVectors.persistent": "true",
+            "spark.rapids.sql.format.parquet.reader.type": "PERFILE",
+            "spark.rapids.sql.reader.chunked": "false",
+            "delta.deletionVectors.useMetadataRowIndex": "true"}
+
+    repeat_count = 5
+
+    def gen_data(spark):
+        data = list(range(16)) * repeat_count
+        return spark.createDataFrame([(i,) for i in data], ["a"])
+
     def setup_tables(spark):
         setup_delta_dest_table(spark, data_path,
-                               dest_table_func=lambda spark: unary_op_df(spark, int_gen),
+                               dest_table_func=lambda spark: gen_data(spark),
+                               # dest_table_func=lambda spark: unary_op_df(spark, gen),
                                use_cdf=use_cdf, enable_deletion_vectors=True)
-        spark.sql("INSERT INTO delta.`{}` VALUES(1)".format(data_path))
-        spark.sql("DELETE FROM delta.`{}` WHERE a = 1".format(data_path))
+        num_deleted = spark.sql("DELETE FROM delta.`{}` WHERE a = 1".format(data_path)).collect()[0][0]
+        assert num_deleted == repeat_count, "Expected enough rows to be deleted"
+        # assert num_deleted > 99, "Expected enough rows to be deleted"
     with_cpu_session(setup_tables, conf=conf)
     assert_gpu_and_cpu_are_equal_collect(
         lambda spark: spark.sql("SELECT * FROM delta.`{}`".format(data_path)),

@@ -2782,6 +2782,15 @@ val SHUFFLE_COMPRESSION_LZ4_CHUNK_SIZE = conf("spark.rapids.shuffle.compression.
       .bytesConf(ByteUnit.BYTE)
       .createWithDefault(20 * 1024 * 1024)
 
+  val DELTA_DELETION_VECTORS_USE_NATIVE =
+    conf("spark.rapids.sql.delta.deletionVectors.useNative")
+      .doc("When enabled, uses the native cuDF-based deletion vector implementation for " +
+        "improved performance and support for file coalescing with deletion vectors. When " +
+        "disabled, uses the Scala-based implementation. The native implementation is " +
+        "experimental and may have different behavior in edge cases.")
+      .booleanConf
+      .createWithDefault(false)
+
   val ENABLE_DELTA_LOW_SHUFFLE_MERGE =
     conf("spark.rapids.sql.delta.lowShuffleMerge.enabled")
     .doc("Option to turn on the low shuffle merge for Delta Lake. Currently there are some " +
@@ -3936,6 +3945,8 @@ class RapidsConf(conf: Map[String, String]) extends Logging {
   lazy val testGetJsonObjectSaveRows: Int = get(TEST_GET_JSON_OBJECT_SAVE_ROWS)
 
   lazy val isDeltaLowShuffleMergeEnabled: Boolean = get(ENABLE_DELTA_LOW_SHUFFLE_MERGE)
+
+  lazy val isDeltaDeletionVectorsUseNative: Boolean = get(DELTA_DELETION_VECTORS_USE_NATIVE)
 
   lazy val isHashFuncPartitioningEnabled: Boolean = get(ENABLE_HASH_FUNCTION_IN_PARTITIONING)
 

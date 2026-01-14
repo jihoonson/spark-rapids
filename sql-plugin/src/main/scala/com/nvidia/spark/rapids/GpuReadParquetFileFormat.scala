@@ -16,7 +16,7 @@
 
 package com.nvidia.spark.rapids
 
-import com.nvidia.spark.rapids.parquet.{GpuParquetMultiFilePartitionReaderFactory, GpuParquetPartitionReaderFactory, GpuParquetScan}
+import com.nvidia.spark.rapids.parquet.{GpuParquetMultiFilePartitionReaderFactory, GpuParquetPartitionReaderFactory, GpuParquetPartitionReaderFactoryBase, GpuParquetScan}
 import org.apache.hadoop.conf.Configuration
 
 import org.apache.spark.broadcast.Broadcast
@@ -26,6 +26,7 @@ import org.apache.spark.sql.connector.read.PartitionReaderFactory
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.PartitionedFile
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.rapids.GpuFileSourceScanExec
 import org.apache.spark.sql.rapids.shims.SparkSessionUtils
 import org.apache.spark.sql.sources.Filter
@@ -36,6 +37,28 @@ import org.apache.spark.util.SerializableConfiguration
  * A FileFormat that allows reading Parquet files with the GPU.
  */
 class GpuReadParquetFileFormat extends ParquetFileFormat with GpuReadFileFormatWithMetrics {
+
+  def createBaseReaderFactory(sqlConf: SQLConf,
+      broadcastedConf: Broadcast[SerializableConfiguration],
+      dataSchema: StructType,
+      readDataSchema: StructType,
+      partitionSchema: StructType,
+      filters: Seq[Filter],
+      rapidsConf: RapidsConf,
+      metrics: Map[String, GpuMetric],
+      options: Map[String, String]) : GpuParquetPartitionReaderFactoryBase = {
+    GpuParquetPartitionReaderFactory(
+      sqlConf,
+      broadcastedConf,
+      dataSchema,
+      readDataSchema,
+      partitionSchema,
+      filters.toArray,
+      rapidsConf,
+      metrics,
+      options)
+  }
+
   override def buildReaderWithPartitionValuesAndMetrics(
       sparkSession: SparkSession,
       dataSchema: StructType,
@@ -49,13 +72,13 @@ class GpuReadParquetFileFormat extends ParquetFileFormat with GpuReadFileFormatW
     val sqlConf = sparkSession.sessionState.conf
     val broadcastedHadoopConf =
       sparkSession.sparkContext.broadcast(new SerializableConfiguration(hadoopConf))
-    val factory = GpuParquetPartitionReaderFactory(
+    val factory = createBaseReaderFactory(
       sqlConf,
       broadcastedHadoopConf,
       dataSchema,
       requiredSchema,
       partitionSchema,
-      filters.toArray,
+      filters,
       new RapidsConf(sqlConf),
       metrics,
       options)

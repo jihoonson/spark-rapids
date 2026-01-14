@@ -464,7 +464,7 @@ class HMBInputFile(buffer: HostMemoryBuffer) extends InputFile {
     getLength)
 }
 
-private case class GpuParquetFileFilterHandler(
+protected case class GpuParquetFileFilterHandler(
     @transient sqlConf: SQLConf,
     metrics: Map[String, GpuMetric]) extends Logging {
 
@@ -1327,57 +1327,26 @@ case class GpuParquetMultiFilePartitionReaderFactory(
 
 }
 
-case class GpuParquetPartitionReaderFactory(
-    @transient sqlConf: SQLConf,
+case class GpuParquetPartitionReaderFactory(sqlConf: SQLConf,
     broadcastedConf: Broadcast[SerializableConfiguration],
     dataSchema: StructType,
     readDataSchema: StructType,
     partitionSchema: StructType,
     filters: Array[Filter],
-    @transient rapidsConf: RapidsConf,
+    rapidsConf: RapidsConf,
     metrics: Map[String, GpuMetric],
-    @transient params: Map[String, String])
-  extends ShimFilePartitionReaderFactory(params) with Logging {
-
-  // we make sure we mark this as a transient lazy val, so we only materialize it
-  // from a task when we need to create the fileIO instance. This stops a regression
-  // when we materialize the hadoop conf eagerly, see:
-  // https://github.com/NVIDIA/spark-rapids/issues/13353
-  @transient private lazy val fileIO = new HadoopFileIO(broadcastedConf.value.value)
-  private val isCaseSensitive = sqlConf.caseSensitiveAnalysis
-  private val debugDumpPrefix = rapidsConf.parquetDebugDumpPrefix
-  private val debugDumpAlways = rapidsConf.parquetDebugDumpAlways
-  private val maxReadBatchSizeRows = rapidsConf.maxReadBatchSizeRows
-  private val maxReadBatchSizeBytes = rapidsConf.maxReadBatchSizeBytes
-  private val targetSizeBytes = rapidsConf.gpuTargetBatchSizeBytes
-  private val maxGpuColumnSizeBytes = rapidsConf.maxGpuColumnSizeBytes
-  private val useChunkedReader = rapidsConf.chunkedReaderEnabled
-  private val maxChunkedReaderMemoryUsageSizeBytes =
-    if(rapidsConf.limitChunkedReaderMemoryUsage) {
-      (rapidsConf.chunkedReaderMemoryUsageRatio * targetSizeBytes).toLong
-    } else {
-      0L
-    }
-  private val filterHandler = GpuParquetFileFilterHandler(sqlConf, metrics)
-  private val readUseFieldId = ParquetSchemaClipShims.useFieldId(sqlConf)
-  private val footerReadType = GpuParquetScan.footerReaderHeuristic(
-    rapidsConf.parquetReaderFooterType, dataSchema, readDataSchema, readUseFieldId)
-  private val compressCfg = CpuCompressionConfig.forParquet(rapidsConf)
-
-  override def supportColumnarReads(partition: InputPartition): Boolean = true
-
-  override def buildReader(partitionedFile: PartitionedFile): PartitionReader[InternalRow] = {
-    throw new IllegalStateException("GPU column parser called to read rows")
-  }
-
-  override def buildColumnarReader(
-      partitionedFile: PartitionedFile): PartitionReader[ColumnarBatch] = {
-    val reader = new PartitionReaderWithBytesRead(buildBaseColumnarParquetReader(partitionedFile))
-    ColumnarPartitionReaderWithPartitionValues.newReader(partitionedFile, reader, partitionSchema,
-      maxGpuColumnSizeBytes)
-  }
-
-  private def buildBaseColumnarParquetReader(
+    params: Map[String, String]) extends GpuParquetPartitionReaderFactoryBase(
+  sqlConf,
+  broadcastedConf,
+  dataSchema,
+  readDataSchema,
+  partitionSchema,
+  filters,
+  rapidsConf,
+  metrics,
+  params
+) {
+  override protected def buildBaseColumnarParquetReader(
       file: PartitionedFile): PartitionReader[ColumnarBatch] = {
     // we need to copy the Hadoop Configuration because filter push down can mutate it,
     // which can affect other tasks.
@@ -1395,6 +1364,60 @@ case class GpuParquetPartitionReaderFactory(
       metrics, singleFileInfo.dateRebaseMode,
       singleFileInfo.timestampRebaseMode, singleFileInfo.hasInt96Timestamps, readUseFieldId)
   }
+}
+
+abstract class GpuParquetPartitionReaderFactoryBase(
+    @transient sqlConf: SQLConf,
+    broadcastedConf: Broadcast[SerializableConfiguration],
+    dataSchema: StructType,
+    readDataSchema: StructType,
+    partitionSchema: StructType,
+    filters: Array[Filter],
+    @transient rapidsConf: RapidsConf,
+    metrics: Map[String, GpuMetric],
+    @transient params: Map[String, String])
+  extends ShimFilePartitionReaderFactory(params) with Logging {
+
+  // we make sure we mark this as a transient lazy val, so we only materialize it
+  // from a task when we need to create the fileIO instance. This stops a regression
+  // when we materialize the hadoop conf eagerly, see:
+  // https://github.com/NVIDIA/spark-rapids/issues/13353
+  @transient protected lazy val fileIO = new HadoopFileIO(broadcastedConf.value.value)
+  protected val isCaseSensitive = sqlConf.caseSensitiveAnalysis
+  protected val debugDumpPrefix = rapidsConf.parquetDebugDumpPrefix
+  protected val debugDumpAlways = rapidsConf.parquetDebugDumpAlways
+  protected val maxReadBatchSizeRows = rapidsConf.maxReadBatchSizeRows
+  protected val maxReadBatchSizeBytes = rapidsConf.maxReadBatchSizeBytes
+  protected val targetSizeBytes = rapidsConf.gpuTargetBatchSizeBytes
+  protected val maxGpuColumnSizeBytes = rapidsConf.maxGpuColumnSizeBytes
+  protected val useChunkedReader = rapidsConf.chunkedReaderEnabled
+  protected val maxChunkedReaderMemoryUsageSizeBytes =
+    if(rapidsConf.limitChunkedReaderMemoryUsage) {
+      (rapidsConf.chunkedReaderMemoryUsageRatio * targetSizeBytes).toLong
+    } else {
+      0L
+    }
+  protected val filterHandler = GpuParquetFileFilterHandler(sqlConf, metrics)
+  protected val readUseFieldId = ParquetSchemaClipShims.useFieldId(sqlConf)
+  protected val footerReadType = GpuParquetScan.footerReaderHeuristic(
+    rapidsConf.parquetReaderFooterType, dataSchema, readDataSchema, readUseFieldId)
+  protected val compressCfg = CpuCompressionConfig.forParquet(rapidsConf)
+
+  override def supportColumnarReads(partition: InputPartition): Boolean = true
+
+  override def buildReader(partitionedFile: PartitionedFile): PartitionReader[InternalRow] = {
+    throw new IllegalStateException("GPU column parser called to read rows")
+  }
+
+  override def buildColumnarReader(
+      partitionedFile: PartitionedFile): PartitionReader[ColumnarBatch] = {
+    val reader = new PartitionReaderWithBytesRead(buildBaseColumnarParquetReader(partitionedFile))
+    ColumnarPartitionReaderWithPartitionValues.newReader(partitionedFile, reader, partitionSchema,
+      maxGpuColumnSizeBytes)
+  }
+
+  protected def buildBaseColumnarParquetReader(file: PartitionedFile)
+  : PartitionReader[ColumnarBatch]
 }
 
 case class CpuCompressionConfig(
@@ -2234,7 +2257,9 @@ class MultiFileParquetPartitionReader(
     poolConf: ThreadPoolConf,
     ignoreMissingFiles: Boolean,
     ignoreCorruptFiles: Boolean,
-    useFieldId: Boolean)
+    useFieldId: Boolean,
+    deletionVectors: Option[Array[Array[Byte]]] = None,
+    deletionVectorRowCounts: Option[Array[Int]] = None)
   extends MultiFileCoalescingPartitionReaderBase(conf, clippedBlocks,
     partitionSchema, maxReadBatchSizeRows, maxReadBatchSizeBytes, maxGpuColumnSizeBytes,
     poolConf, execMetrics)
@@ -2980,6 +3005,21 @@ class MultiFileCloudParquetPartitionReader(
 }
 
 object MakeParquetTableProducer extends Logging {
+  /**
+   * Drops the first column from a table. Used when reading with deletion vectors,
+   * as the native API prepends a UINT64 index column that must be removed.
+   */
+  def dropFirstColumn(table: Table): Table = {
+    if (table.getNumberOfColumns == 0) {
+      table
+    } else {
+      val columnIndices = (1 until table.getNumberOfColumns).toArray
+      withResource(table) { _ =>
+        new Table(columnIndices.map(table.getColumn): _*)
+      }
+    }
+  }
+
   def apply(
       useChunkedReader: Boolean,
       maxChunkedReaderMemoryUsageSizeBytes: Long,
@@ -2997,7 +3037,11 @@ object MakeParquetTableProducer extends Logging {
       clippedParquetSchema: MessageType,
       splits: Array[PartitionedFile],
       debugDumpPrefix: Option[String],
-      debugDumpAlways: Boolean
+      debugDumpAlways: Boolean,
+      deletionVectors: Option[Array[Array[Byte]]] = None,
+      deletionVectorRowCounts: Option[Array[Int]] = None,
+      rowGroupOffsets: Option[Array[Long]] = None,
+      rowGroupNumRows: Option[Array[Int]] = None
   ): GpuDataProducer[Table] = {
     debugDumpPrefix.foreach { prefix =>
       if (debugDumpAlways) {
@@ -3006,16 +3050,39 @@ object MakeParquetTableProducer extends Logging {
       }
     }
     if (useChunkedReader) {
-      ParquetTableReader(conf, chunkSizeByteLimit, maxChunkedReaderMemoryUsageSizeBytes,
-        opts, buffers, metrics, dateRebaseMode, timestampRebaseMode, hasInt96Timestamps,
-        isSchemaCaseSensitive, useFieldId, readDataSchema, clippedParquetSchema,
-        splits, debugDumpPrefix, debugDumpAlways)
+      if (deletionVectors.isDefined) {
+        DeletionVectorTableReader(conf, chunkSizeByteLimit, maxChunkedReaderMemoryUsageSizeBytes,
+          opts, buffers, metrics, dateRebaseMode, timestampRebaseMode, hasInt96Timestamps,
+          isSchemaCaseSensitive, useFieldId, readDataSchema, clippedParquetSchema,
+          splits, debugDumpPrefix, debugDumpAlways,
+          deletionVectors.get, deletionVectorRowCounts.get,
+          rowGroupOffsets.getOrElse(Array()), rowGroupNumRows.getOrElse(Array()))
+      } else {
+        ParquetTableReader(conf, chunkSizeByteLimit, maxChunkedReaderMemoryUsageSizeBytes,
+          opts, buffers, metrics, dateRebaseMode, timestampRebaseMode, hasInt96Timestamps,
+          isSchemaCaseSensitive, useFieldId, readDataSchema, clippedParquetSchema,
+          splits, debugDumpPrefix, debugDumpAlways)
+      }
     } else {
       val table = withResource(buffers) { _ =>
         try {
           RmmRapidsRetryIterator.withRetryNoSplit[Table] {
             NvtxIdWithMetrics(NvtxRegistry.PARQUET_DECODE, metrics(GPU_DECODE_TIME)) {
-              Table.readParquet(opts, buffers:_*)
+              if (deletionVectors.isDefined && deletionVectors.get.length == 1) {
+               // Single deletion vector - use simpler API
+                com.nvidia.spark.rapids.jni.DeletionVector.readParquet(
+                  opts, deletionVectors.get(0),
+                  rowGroupOffsets.orNull, rowGroupNumRows.orNull,
+                  buffers:_*)
+              } else if (deletionVectors.isDefined && deletionVectors.get.length > 1) {
+                // Multiple deletion vectors - need to get options handle first
+                // For now, fall back to single file approach until we properly support coalescing
+                throw new UnsupportedOperationException(
+                  "Multiple deletion vectors in non-chunked mode not yet supported")
+              } else {
+                // No deletion vectors - use standard API
+                Table.readParquet(opts, buffers:_*)
+              }
             }
           }
         } catch {
@@ -3031,16 +3098,23 @@ object MakeParquetTableProducer extends Logging {
             throw new IOException(s"Error when processing ${splits.mkString("; ")}$dumpMsg", e)
         }
       }
-      closeOnExcept(table) { _ =>
-        GpuParquetScan.throwIfRebaseNeededInExceptionMode(table, dateRebaseMode,
+      // Drop the first column if deletion vectors were used (native API prepends index column)
+      logError(s"table has ${table.getRowCount()} rows")
+      val tableWithoutIndex = if (deletionVectors.isDefined) {
+        MakeParquetTableProducer.dropFirstColumn(table)
+      } else {
+        table
+      }
+      closeOnExcept(tableWithoutIndex) { _ =>
+        GpuParquetScan.throwIfRebaseNeededInExceptionMode(tableWithoutIndex, dateRebaseMode,
           timestampRebaseMode)
-        if (readDataSchema.length < table.getNumberOfColumns) {
+        if (readDataSchema.length < tableWithoutIndex.getNumberOfColumns) {
           throw new QueryExecutionException(s"Expected ${readDataSchema.length} columns " +
-            s"but read ${table.getNumberOfColumns} from ${splits.mkString("; ")}")
+            s"but read ${tableWithoutIndex.getNumberOfColumns} from ${splits.mkString("; ")}")
         }
       }
       metrics(NUM_OUTPUT_BATCHES) += 1
-      val evolvedSchemaTable = ParquetSchemaUtils.evolveSchemaIfNeededAndClose(table,
+      val evolvedSchemaTable = ParquetSchemaUtils.evolveSchemaIfNeededAndClose(tableWithoutIndex,
         clippedParquetSchema, readDataSchema, isSchemaCaseSensitive, useFieldId)
       val outputTable = GpuParquetScan.rebaseDateTime(evolvedSchemaTable, dateRebaseMode,
         timestampRebaseMode)
@@ -3090,6 +3164,99 @@ case class ParquetTableReader(
           throw new IOException(s"Error when processing $splitsString$dumpMsg", e)
       }
     }
+
+    closeOnExcept(table) { _ =>
+      GpuParquetScan.throwIfRebaseNeededInExceptionMode(table, dateRebaseMode, timestampRebaseMode)
+      if (readDataSchema.length < table.getNumberOfColumns) {
+        throw new QueryExecutionException(s"Expected ${readDataSchema.length} columns " +
+          s"but read ${table.getNumberOfColumns} from $splitsString")
+      }
+    }
+    metrics(NUM_OUTPUT_BATCHES) += 1
+    val evolvedSchemaTable = ParquetSchemaUtils.evolveSchemaIfNeededAndClose(table,
+      clippedParquetSchema, readDataSchema, isSchemaCaseSensitive, useFieldId)
+    GpuParquetScan.rebaseDateTime(evolvedSchemaTable, dateRebaseMode, timestampRebaseMode)
+  }
+
+  override def close(): Unit = {
+    reader.close()
+    buffers.safeClose()
+  }
+}
+
+/**
+ * A chunked reader for Parquet files with deletion vectors.
+ * Similar to ParquetTableReader but uses the DeletionVector APIs which prepend
+ * an index column that must be dropped.
+ */
+case class DeletionVectorTableReader(
+    conf: Configuration,
+    chunkSizeByteLimit: Long,
+    maxChunkedReaderMemoryUsageSizeBytes: Long,
+    opts: ParquetOptions,
+    buffers: Array[HostMemoryBuffer],
+    metrics : Map[String, GpuMetric],
+    dateRebaseMode: DateTimeRebaseMode,
+    timestampRebaseMode: DateTimeRebaseMode,
+    hasInt96Timestamps: Boolean,
+    isSchemaCaseSensitive: Boolean,
+    useFieldId: Boolean,
+    readDataSchema: StructType,
+    clippedParquetSchema: MessageType,
+    splits: Array[PartitionedFile],
+    debugDumpPrefix: Option[String],
+    debugDumpAlways: Boolean,
+    deletionVectors: Array[Array[Byte]],
+    deletionVectorRowCounts: Array[Int],
+    rowGroupOffsets: Array[Long],
+    rowGroupNumRows: Array[Int]) extends GpuDataProducer[Table] with Logging {
+
+  logError("Using DeletionVectorTableReader for reading Parquet with deletion vectors")
+
+  // Use reflection to access private toCppParquetOptions method
+  private[this] val optionsHandle: Long = {
+    val method = classOf[com.nvidia.spark.rapids.jni.DeletionVector]
+      .getDeclaredMethod("toCppParquetOptions", classOf[ParquetOptions])
+    method.setAccessible(true)
+    method.invoke(null, opts).asInstanceOf[Long]
+  }
+  
+  private[this] val reader = if (deletionVectors.length == 1) {
+    // Single deletion vector
+    new com.nvidia.spark.rapids.jni.DeletionVector.ChunkedReader(chunkSizeByteLimit,
+      maxChunkedReaderMemoryUsageSizeBytes, optionsHandle, deletionVectors(0),
+      rowGroupOffsets, rowGroupNumRows)
+  } else {
+    // Multiple deletion vectors for coalescing
+    new com.nvidia.spark.rapids.jni.DeletionVector.ChunkedReader(chunkSizeByteLimit,
+      maxChunkedReaderMemoryUsageSizeBytes, optionsHandle, deletionVectors,
+      deletionVectorRowCounts, rowGroupOffsets, rowGroupNumRows)
+  }
+
+  private[this] lazy val splitsString = splits.mkString("; ")
+
+  override def hasNext: Boolean = reader.hasNext
+
+  override def next: Table = {
+    val rawTable = NvtxIdWithMetrics(NvtxRegistry.PARQUET_DECODE, metrics(GPU_DECODE_TIME)) {
+      try {
+        reader.readChunk()
+      } catch {
+        case e: Exception =>
+          val dumpMsg = debugDumpPrefix.map { prefix =>
+            if (!debugDumpAlways) {
+              val p = DumpUtils.dumpBuffer(conf, buffers, prefix, ".parquet")
+              s", data dumped to $p"
+            } else {
+              ""
+            }
+          }.getOrElse("")
+          throw new IOException(s"Error when processing $splitsString$dumpMsg", e)
+      }
+    }
+
+    // Drop the first column (index column prepended by the native API)
+    val table = MakeParquetTableProducer.dropFirstColumn(rawTable)
 
     closeOnExcept(table) { _ =>
       GpuParquetScan.throwIfRebaseNeededInExceptionMode(table, dateRebaseMode, timestampRebaseMode)

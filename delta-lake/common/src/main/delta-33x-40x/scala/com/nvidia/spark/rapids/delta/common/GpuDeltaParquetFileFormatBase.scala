@@ -20,11 +20,16 @@ import ai.rapids.cudf._
 import com.nvidia.spark.rapids._
 import com.nvidia.spark.rapids.Arm.withResource
 import com.nvidia.spark.rapids.RapidsPluginImplicits._
+import com.nvidia.spark.rapids.jni.fileio.RapidsFileIO
 import com.nvidia.spark.rapids.parquet._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+import org.apache.parquet.hadoop.metadata.BlockMetaData
+import org.apache.parquet.schema.MessageType
 import scala.collection.mutable.ArrayBuffer
 
+import com.nvidia.spark.rapids.GpuMetric._
+import org.apache.spark.TaskContext
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.MDC
@@ -34,7 +39,7 @@ import org.apache.spark.sql.connector.read.{InputPartition, PartitionReader, Par
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.deletionvectors.StoredBitmap
+import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArrayFormat, StoredBitmap}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -44,7 +49,7 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.rapids._
 import org.apache.spark.sql.sources._
 import org.apache.spark.sql.types.{LongType, MetadataBuilder, StructType}
-import org.apache.spark.sql.vectorized.ColumnarBatch
+import org.apache.spark.sql.vectorized.{ColumnarBatch, ColumnVector => SparkVector}
 import org.apache.spark.util.SerializableConfiguration
 
 class GpuDeltaParquetFileFormatBase(
@@ -147,6 +152,212 @@ class GpuDeltaParquetFileFormatBase(
 
   override def hashCode(): Int = getClass.getCanonicalName.hashCode()
 
+  class DeltaParquetPartitionReader(
+      override val fileIO: RapidsFileIO,
+      override val conf: Configuration,
+      split: PartitionedFile,
+      filePath: Path,
+      clippedBlocks: Iterable[BlockMetaData],
+      clippedParquetSchema: MessageType,
+      override val isSchemaCaseSensitive: Boolean,
+      readDataSchema: StructType,
+      debugDumpPrefix: Option[String],
+      debugDumpAlways: Boolean,
+      maxReadBatchSizeRows: Integer,
+      maxReadBatchSizeBytes: Long,
+      targetBatchSizeBytes: Long,
+      useChunkedReader: Boolean,
+      maxChunkedReaderMemoryUsageSizeBytes: Long,
+      override val compressCfg: CpuCompressionConfig,
+      override val execMetrics: Map[String, GpuMetric],
+      dateRebaseMode: DateTimeRebaseMode,
+      timestampRebaseMode: DateTimeRebaseMode,
+      hasInt96Timestamps: Boolean,
+      useFieldId: Boolean) extends FilePartitionReaderBase(conf, execMetrics)
+    with ParquetPartitionReaderBase {
+
+    private val blockIterator:  BufferedIterator[BlockMetaData] = clippedBlocks.iterator.buffered
+
+    override def next(): Boolean = {
+      if (batchIter.hasNext) {
+        return true
+      }
+      batchIter = EmptyGpuColumnarBatchIterator
+      if (!isDone) {
+        if (!blockIterator.hasNext) {
+          isDone = true
+        } else {
+          batchIter = readBatches()
+        }
+      }
+
+      // NOTE: At this point, the task may not have yet acquired the semaphore if `batch` is `None`.
+      // We are not acquiring the semaphore here since this next() is getting called from
+      // the `PartitionReaderIterator` which implements a standard iterator pattern, and
+      // advertises `hasNext` as false when we return false here. No downstream tasks should
+      // try to call next after `hasNext` returns false, and any task that produces some kind of
+      // data when `hasNext` is false is responsible to get the semaphore themselves.
+      batchIter.hasNext
+    }
+
+    private def readDeletionVectors(conf: Configuration,
+        partitionedFile: PartitionedFile,
+        tablePath: String): Array[Byte] = {
+      // Fetch the DV descriptor from the partitioned file
+      val dvDescriptorOpt = partitionedFile.otherConstantMetadataColumnValues
+        .get(FILE_ROW_INDEX_FILTER_ID_ENCODED)
+      val filterTypeOpt = partitionedFile.otherConstantMetadataColumnValues
+        .get(FILE_ROW_INDEX_FILTER_TYPE)
+      if (dvDescriptorOpt.isDefined && filterTypeOpt.isDefined) {
+        val dvDesc = DeletionVectorDescriptor.deserializeFromBase64(
+          dvDescriptorOpt.get.asInstanceOf[String])
+//        val bitmapLoader = new RapidsDelta64RoaringBitmapLoader(conf)
+//        val bitmap = new RapidsDeltaStoredBitmap(dvDesc, Some(new Path(tablePath))).load(bitmapLoader)
+
+        val dvStore = new HadoopFileSystemDVStore(conf)
+        val bitmap = StoredBitmap.create(dvDesc, new Path(tablePath)).load(dvStore)
+        logError(s"bitmap cardinality in scala: ${bitmap.cardinality}")
+        val serialized = bitmap.serializeAsByteArray(RoaringBitmapArrayFormat.Portable)
+        val serializedInStandard: Array[Byte] = new Array[Byte](serialized.length - 4)
+        // Skip the magic number at the start
+        System.arraycopy(serialized, 4, serializedInStandard, 0, serializedInStandard.length)
+
+        filterTypeOpt.get match {
+          case RowIndexFilterType.IF_CONTAINED =>
+            serializedInStandard
+          case RowIndexFilterType.IF_NOT_CONTAINED =>
+            throw new RuntimeException("TODO: should return the complement deletion vector")
+          case unexpectedFilterType => throw new IllegalStateException(
+            s"Unexpected row index filter type: ${unexpectedFilterType}")
+        }
+      } else if (dvDescriptorOpt.isDefined || filterTypeOpt.isDefined) {
+        throw new IllegalStateException(
+          s"Both ${FILE_ROW_INDEX_FILTER_ID_ENCODED} and ${FILE_ROW_INDEX_FILTER_TYPE} " +
+            "should either both have values or no values at all.")
+      } else {
+        // TODO: return an empty deletion vector
+        throw new RuntimeException("TODO: should return an empty deletion vector")
+      }
+    }
+
+    private def readBatches(): Iterator[ColumnarBatch] = {
+      NvtxRegistry.PARQUET_READ_BATCH {
+        val currentChunkedBlocks = populateCurrentBlockChunk(blockIterator,
+          maxReadBatchSizeRows, maxReadBatchSizeBytes, readDataSchema)
+        if (clippedParquetSchema.getFieldCount == 0) {
+          // not reading any data, so return a degenerate ColumnarBatch with the row count
+          val numRows = currentChunkedBlocks.map(_.getRowCount).sum.toInt
+          if (numRows == 0) {
+            EmptyGpuColumnarBatchIterator
+          } else {
+            // Someone is going to process this data, even if it is just a row count
+            GpuSemaphore.acquireIfNecessary(TaskContext.get())
+            val nullColumns = readDataSchema.safeMap(f =>
+              GpuColumnVector.fromNull(numRows, f.dataType).asInstanceOf[SparkVector])
+            new SingleGpuColumnarBatchIterator(new ColumnarBatch(nullColumns.toArray, numRows))
+          }
+        } else {
+          val colTypes = readDataSchema.fields.map(f => f.dataType)
+          val iter = if (currentChunkedBlocks.isEmpty) {
+            CachedGpuBatchIterator(EmptyTableReader, colTypes)
+          } else {
+            val parseOpts = getParquetOptions(readDataSchema, clippedParquetSchema, useFieldId)
+            val (dataBuffer, _) = metrics(BUFFER_TIME).ns {
+              readPartFile(currentChunkedBlocks, clippedParquetSchema, filePath)
+            }
+            val maybeSerializedDV = tablePath.map(tp => Array(readDeletionVectors(conf, split, tp)))
+            if (dataBuffer.length == 0) {
+              dataBuffer.close()
+              CachedGpuBatchIterator(EmptyTableReader, colTypes)
+            } else {
+              RmmRapidsRetryIterator.withRetryNoSplit(dataBuffer) { _ =>
+                // MakeParquetTableProducer will try to close the hostBuf
+                val hostBuf = dataBuffer.getDataHostBuffer()
+                // Duplicate request is ok, and start to use the GPU just after the host
+                // buffer is ready to not block CPU things.
+                GpuSemaphore.acquireIfNecessary(TaskContext.get())
+                val producer = MakeParquetTableProducer(useChunkedReader,
+                  maxChunkedReaderMemoryUsageSizeBytes, conf,
+                  targetBatchSizeBytes, parseOpts,
+                  Array(hostBuf), metrics,
+                  dateRebaseMode, timestampRebaseMode,
+                  hasInt96Timestamps, isSchemaCaseSensitive,
+                  useFieldId, readDataSchema,
+                  clippedParquetSchema, Array(split),
+                  debugDumpPrefix, debugDumpAlways,
+                  maybeSerializedDV,
+                  // TODO: this should be the total row count of the row groups to read
+                  None
+                )
+                CachedGpuBatchIterator(producer, colTypes)
+              }
+            }
+          }
+          iter.map { batch =>
+            logDebug(s"GPU batch size: ${GpuColumnVector.getTotalDeviceMemoryUsed(batch)} bytes")
+            batch
+          }
+        }
+      }
+    }
+  }
+
+  case class GpuDeltaParquetPartitionReaderFactory(
+      @transient sqlConf: SQLConf,
+      broadcastedConf: Broadcast[SerializableConfiguration],
+      dataSchema: StructType,
+      readDataSchema: StructType,
+      partitionSchema: StructType,
+      filters: Array[Filter],
+      @transient rapidsConf: RapidsConf,
+      metrics: Map[String, GpuMetric],
+      params: Map[String, String]
+    ) extends GpuParquetPartitionReaderFactoryBase(sqlConf, broadcastedConf,
+      dataSchema, readDataSchema, partitionSchema,
+      filters, rapidsConf,
+      metrics = metrics, params = params) {
+    protected override def buildBaseColumnarParquetReader(
+        file: PartitionedFile): PartitionReader[ColumnarBatch] = {
+      // we need to copy the Hadoop Configuration because filter push down can mutate it,
+      // which can affect other tasks.
+      val conf = new Configuration(broadcastedConf.value.value)
+      val startTime = System.nanoTime()
+      val singleFileInfo = filterHandler.filterBlocks(fileIO, footerReadType, file, conf, filters,
+        readDataSchema)
+      metrics.get(FILTER_TIME).foreach {
+        _ += (System.nanoTime() - startTime)
+      }
+      // TODO: push the filter down only if filters exist
+      new DeltaParquetPartitionReader(fileIO, conf, file, singleFileInfo.filePath, singleFileInfo.blocks,
+        singleFileInfo.schema, isCaseSensitive, readDataSchema, debugDumpPrefix, debugDumpAlways,
+        maxReadBatchSizeRows, maxReadBatchSizeBytes, targetSizeBytes,
+        useChunkedReader, maxChunkedReaderMemoryUsageSizeBytes, compressCfg,
+        metrics, singleFileInfo.dateRebaseMode,
+        singleFileInfo.timestampRebaseMode, singleFileInfo.hasInt96Timestamps, readUseFieldId)
+    }
+  }
+
+  override def createBaseReaderFactory(sqlConf: SQLConf,
+      broadcastedConf: Broadcast[SerializableConfiguration],
+      dataSchema: StructType,
+      readDataSchema: StructType,
+      partitionSchema: StructType,
+      filters: Seq[Filter],
+      rapidsConf: RapidsConf,
+      metrics: Map[String, GpuMetric],
+      options: Map[String, String]) : GpuParquetPartitionReaderFactoryBase = {
+    GpuDeltaParquetPartitionReaderFactory(
+      sqlConf,
+      broadcastedConf,
+      dataSchema,
+      readDataSchema,
+      partitionSchema,
+      filters.toArray,
+      rapidsConf,
+      metrics,
+      options)
+  }
+
   override def buildReaderWithPartitionValuesAndMetrics(
       sparkSession: SparkSession,
       dataSchema: StructType,
@@ -161,8 +372,8 @@ class GpuDeltaParquetFileFormatBase(
     // We don't want to use metadata to generate Row Indices as it will also
     // generate hidden metadata that we currently can't handle.
     // For details see https://github.com/NVIDIA/spark-rapids/issues/7458
-    val useMetadataRowIndexConf = DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX
-    val useMetadataRowIndex = sparkSession.sessionState.conf.getConf(useMetadataRowIndexConf)
+//    val useMetadataRowIndexConf = DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX
+//    val useMetadataRowIndex = sparkSession.sessionState.conf.getConf(useMetadataRowIndexConf)
 
     val dataReader = super.buildReaderWithPartitionValuesAndMetrics(
       sparkSession,
@@ -174,44 +385,46 @@ class GpuDeltaParquetFileFormatBase(
       hadoopConf,
       metrics)
 
-    val schemaWithIndices = requiredSchema.fields.zipWithIndex
-    def findColumn(name: String): Option[ColumnMetadata] = {
-      val results = schemaWithIndices.filter(_._1.name == name)
-      if (results.length > 1) {
-        throw new IllegalArgumentException(
-          s"There are more than one column with name=`$name` requested in the reader output")
-      }
-      results.headOption.map(e => ColumnMetadata(e._2, e._1))
-    }
+    dataReader
 
-    val isRowDeletedColumn = findColumn(IS_ROW_DELETED_COLUMN_NAME)
-    val rowIndexColumnName = ROW_INDEX_COLUMN_NAME
-
-    val rowIndexColumn = findColumn(rowIndexColumnName)
-
-    // We don't have any additional columns to generate, just return the original reader as is.
-    if (isRowDeletedColumn.isEmpty && rowIndexColumn.isEmpty) return dataReader
-    if (isRowDeletedColumn.isEmpty) return dataReader
-
-    require(useMetadataRowIndex || !optimizationsEnabled,
-      "Cannot generate row index related metadata with file splitting or predicate pushdown")
-
-    if (hasTablePath && isRowDeletedColumn.isEmpty) {
-      throw new IllegalArgumentException(
-        s"Expected a column $IS_ROW_DELETED_COLUMN_NAME in the schema")
-    }
-    val serializableHadoopConf = new SerializableConfiguration(hadoopConf)
-    (file: PartitionedFile) => {
-      val iter = dataReader(file)
-      RapidsDeletionVectorUtils.iteratorWithAdditionalMetadataColumns(
-        file,
-        iter,
-        isRowDeletedColumn,
-        rowIndexColumn,
-        tablePath,
-        serializableHadoopConf,
-        metrics).asInstanceOf[Iterator[InternalRow]]
-    }
+//    val schemaWithIndices = requiredSchema.fields.zipWithIndex
+//    def findColumn(name: String): Option[ColumnMetadata] = {
+//      val results = schemaWithIndices.filter(_._1.name == name)
+//      if (results.length > 1) {
+//        throw new IllegalArgumentException(
+//          s"There are more than one column with name=`$name` requested in the reader output")
+//      }
+//      results.headOption.map(e => ColumnMetadata(e._2, e._1))
+//    }
+//
+//    val isRowDeletedColumn = findColumn(IS_ROW_DELETED_COLUMN_NAME)
+//    val rowIndexColumnName = ROW_INDEX_COLUMN_NAME
+//
+//    val rowIndexColumn = findColumn(rowIndexColumnName)
+//
+//    // We don't have any additional columns to generate, just return the original reader as is.
+//    if (isRowDeletedColumn.isEmpty && rowIndexColumn.isEmpty) return dataReader
+//    if (useMetadataRowIndex && isRowDeletedColumn.isEmpty) return dataReader
+//
+//    require(useMetadataRowIndex || !optimizationsEnabled,
+//      "Cannot generate row index related metadata with file splitting or predicate pushdown")
+//
+//    if (hasTablePath && isRowDeletedColumn.isEmpty) {
+//      throw new IllegalArgumentException(
+//        s"Expected a column $IS_ROW_DELETED_COLUMN_NAME in the schema")
+//    }
+//    val serializableHadoopConf = new SerializableConfiguration(hadoopConf)
+//    (file: PartitionedFile) => {
+//      val iter = dataReader(file)
+//      RapidsDeletionVectorUtils.iteratorWithAdditionalMetadataColumns(
+//        file,
+//        iter,
+//        isRowDeletedColumn,
+//        rowIndexColumn,
+//        tablePath,
+//        serializableHadoopConf,
+//        metrics).asInstanceOf[Iterator[InternalRow]]
+//    }
   }
 
   override def createMultiFileReaderFactory(
@@ -226,6 +439,8 @@ class GpuDeltaParquetFileFormatBase(
         "https://nvidia.github.io/spark-rapids/docs/additional-functionality/advanced_configs.html")
     }
 
+    val useMetadataRowIndexConf = DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX
+
     new DeltaMultiFileReaderFactory(
       fileScan.conf,
       broadcastedConf,
@@ -235,7 +450,7 @@ class GpuDeltaParquetFileFormatBase(
       prepareFiltersForRead(pushedFilters).toArray,
       fileScan.rapidsConf,
       fileScan.allMetrics,
-      useMetadataRowIndex = false,
+      useMetadataRowIndex = fileScan.relation.sparkSession.sessionState.conf.getConf(useMetadataRowIndexConf),
       tablePath)
   }
 
@@ -334,6 +549,22 @@ class DeltaMultiFileReaderFactory(
   private val rowIndexColumnName = ROW_INDEX_COLUMN_NAME
 
   private val rowIndexColumn = findColumn(rowIndexColumnName)
+
+  override def buildBaseColumnarReaderForCoalescing(
+      files: Array[PartitionedFile],
+      conf: Configuration): PartitionReader[ColumnarBatch] = {
+
+    // For now, native DVs are not fully integrated with coalescing reader
+    // Fall back to standard reader which will use Scala DV processing
+    val reader = super.buildBaseColumnarReaderForCoalescing(files, conf)
+    
+    if (isRowDeletedColumn.isDefined) {
+      new DeltaMultiFileParquetPartitionReader(files, reader,
+        isRowDeletedColumn, rowIndexColumn, broadcastedConf.value, tablePath, metrics)
+    } else {
+      reader
+    }
+  }
 
   override def createColumnarReader(p: InputPartition): PartitionReader[ColumnarBatch] = {
     val files = p.asInstanceOf[FilePartition].files

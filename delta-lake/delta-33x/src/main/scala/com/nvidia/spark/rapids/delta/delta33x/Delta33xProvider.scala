@@ -74,19 +74,19 @@ object Delta33xProvider extends DeltaProviderBase with Logging {
   }
 
   override protected def toGpuParquetFileFormat(fmt: DeltaParquetFileFormat): FileFormat = {
-    val optimizationsEnabled = if (fmt.hasTablePath) {
-      logWarning("Input Delta table has deletion vectors. Optimizations such as file splitting " +
-        "and predicate pushdown are currently not supported for this table " +
-        "(https://github.com/NVIDIA/spark-rapids/issues/13999). If you see performance issues, " +
-        "consider disabling deletion vectors and running the optimize command on the table. " +
-        "See https://docs.delta.io/delta-deletion-vectors/#apply-changes-to-parquet-data-files " +
-        "for more details about how to apply delete changes to physical files.")
-      false
-    } else {
-      fmt.optimizationsEnabled
-    }
+    // val optimizationsEnabled = if (fmt.hasTablePath) {
+    //   logWarning("Input Delta table has deletion vectors. Optimizations such as file splitting " +
+    //     "and predicate pushdown are currently not supported for this table " +
+    //     "(https://github.com/NVIDIA/spark-rapids/issues/13999). If you see performance issues, " +
+    //     "consider disabling deletion vectors and running the optimize command on the table. " +
+    //     "See https://docs.delta.io/delta-deletion-vectors/#apply-changes-to-parquet-data-files " +
+    //     "for more details about how to apply delete changes to physical files.")
+    //   false
+    // } else {
+    //   fmt.optimizationsEnabled
+    // }
     GpuDelta33xParquetFileFormat(fmt.protocol, fmt.metadata, fmt.nullableRowTrackingFields,
-      optimizationsEnabled, fmt.tablePath, fmt.isCDCRead)
+      fmt.optimizationsEnabled, fmt.tablePath, fmt.isCDCRead)
   }
 
   override def convertToGpu(
