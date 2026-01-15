@@ -200,46 +200,6 @@ class GpuDeltaParquetFileFormatBase(
       batchIter.hasNext
     }
 
-    private def readDeletionVectors(conf: Configuration,
-        partitionedFile: PartitionedFile,
-        tablePath: String): Array[Byte] = {
-      // Fetch the DV descriptor from the partitioned file
-      val dvDescriptorOpt = partitionedFile.otherConstantMetadataColumnValues
-        .get(FILE_ROW_INDEX_FILTER_ID_ENCODED)
-      val filterTypeOpt = partitionedFile.otherConstantMetadataColumnValues
-        .get(FILE_ROW_INDEX_FILTER_TYPE)
-      if (dvDescriptorOpt.isDefined && filterTypeOpt.isDefined) {
-        val dvDesc = DeletionVectorDescriptor.deserializeFromBase64(
-          dvDescriptorOpt.get.asInstanceOf[String])
-//        val bitmapLoader = new RapidsDelta64RoaringBitmapLoader(conf)
-//        val bitmap = new RapidsDeltaStoredBitmap(dvDesc, Some(new Path(tablePath))).load(bitmapLoader)
-
-        val dvStore = new HadoopFileSystemDVStore(conf)
-        val bitmap = StoredBitmap.create(dvDesc, new Path(tablePath)).load(dvStore)
-        logError(s"bitmap cardinality in scala: ${bitmap.cardinality}")
-        val serialized = bitmap.serializeAsByteArray(RoaringBitmapArrayFormat.Portable)
-        val serializedInStandard: Array[Byte] = new Array[Byte](serialized.length - 4)
-        // Skip the magic number at the start
-        System.arraycopy(serialized, 4, serializedInStandard, 0, serializedInStandard.length)
-
-        filterTypeOpt.get match {
-          case RowIndexFilterType.IF_CONTAINED =>
-            serializedInStandard
-          case RowIndexFilterType.IF_NOT_CONTAINED =>
-            throw new RuntimeException("TODO: should return the complement deletion vector")
-          case unexpectedFilterType => throw new IllegalStateException(
-            s"Unexpected row index filter type: ${unexpectedFilterType}")
-        }
-      } else if (dvDescriptorOpt.isDefined || filterTypeOpt.isDefined) {
-        throw new IllegalStateException(
-          s"Both ${FILE_ROW_INDEX_FILTER_ID_ENCODED} and ${FILE_ROW_INDEX_FILTER_TYPE} " +
-            "should either both have values or no values at all.")
-      } else {
-        // TODO: return an empty deletion vector
-        throw new RuntimeException("TODO: should return an empty deletion vector")
-      }
-    }
-
     private def readBatches(): Iterator[ColumnarBatch] = {
       NvtxRegistry.PARQUET_READ_BATCH {
         val currentChunkedBlocks = populateCurrentBlockChunk(blockIterator,
@@ -265,7 +225,8 @@ class GpuDeltaParquetFileFormatBase(
             val (dataBuffer, _) = metrics(BUFFER_TIME).ns {
               readPartFile(currentChunkedBlocks, clippedParquetSchema, filePath)
             }
-            val maybeSerializedDV = tablePath.map(tp => Array(readDeletionVectors(conf, split, tp)))
+            val maybeSerializedDV = tablePath.map(tp =>
+              Array(RapidsDeletionVectorUtils.readDeletionVectors(conf, split, tp)))
             if (dataBuffer.length == 0) {
               dataBuffer.close()
               CachedGpuBatchIterator(EmptyTableReader, colTypes)
@@ -287,7 +248,10 @@ class GpuDeltaParquetFileFormatBase(
                   debugDumpPrefix, debugDumpAlways,
                   maybeSerializedDV,
                   // TODO: this should be the total row count of the row groups to read
-                  None
+                  deletionVectorRowCounts = None,
+                  // TODO: set these properly
+                  rowGroupOffsets = None,
+                  rowGroupNumRows = None
                 )
                 CachedGpuBatchIterator(producer, colTypes)
               }
@@ -627,6 +591,45 @@ class DeltaMultiFileParquetPartitionReader(
 }
 
 object RapidsDeletionVectorUtils {
+
+  def readDeletionVectors(conf: Configuration,
+      partitionedFile: PartitionedFile,
+      tablePath: String): Array[Byte] = {
+    // Fetch the DV descriptor from the partitioned file
+    val dvDescriptorOpt = partitionedFile.otherConstantMetadataColumnValues
+      .get(FILE_ROW_INDEX_FILTER_ID_ENCODED)
+    val filterTypeOpt = partitionedFile.otherConstantMetadataColumnValues
+      .get(FILE_ROW_INDEX_FILTER_TYPE)
+    if (dvDescriptorOpt.isDefined && filterTypeOpt.isDefined) {
+      val dvDesc = DeletionVectorDescriptor.deserializeFromBase64(
+        dvDescriptorOpt.get.asInstanceOf[String])
+      //        val bitmapLoader = new RapidsDelta64RoaringBitmapLoader(conf)
+      //        val bitmap = new RapidsDeltaStoredBitmap(dvDesc, Some(new Path(tablePath))).load(bitmapLoader)
+
+      val dvStore = new HadoopFileSystemDVStore(conf)
+      val bitmap = StoredBitmap.create(dvDesc, new Path(tablePath)).load(dvStore)
+      val serialized = bitmap.serializeAsByteArray(RoaringBitmapArrayFormat.Portable)
+      val serializedInStandard: Array[Byte] = new Array[Byte](serialized.length - 4)
+      // Skip the magic number at the start
+      System.arraycopy(serialized, 4, serializedInStandard, 0, serializedInStandard.length)
+
+      filterTypeOpt.get match {
+        case RowIndexFilterType.IF_CONTAINED =>
+          serializedInStandard
+        case RowIndexFilterType.IF_NOT_CONTAINED =>
+          throw new RuntimeException("TODO: should return the complement deletion vector")
+        case unexpectedFilterType => throw new IllegalStateException(
+          s"Unexpected row index filter type: ${unexpectedFilterType}")
+      }
+    } else if (dvDescriptorOpt.isDefined || filterTypeOpt.isDefined) {
+      throw new IllegalStateException(
+        s"Both ${FILE_ROW_INDEX_FILTER_ID_ENCODED} and ${FILE_ROW_INDEX_FILTER_TYPE} " +
+          "should either both have values or no values at all.")
+    } else {
+      // TODO: return an empty deletion vector
+      throw new RuntimeException("TODO: should return an empty deletion vector")
+    }
+  }
 
   /**
    * Processes a {@link ColumnarBatch} by applying row deletion vectors and returns a new batch

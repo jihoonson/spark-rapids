@@ -3055,8 +3055,8 @@ object MakeParquetTableProducer extends Logging {
           opts, buffers, metrics, dateRebaseMode, timestampRebaseMode, hasInt96Timestamps,
           isSchemaCaseSensitive, useFieldId, readDataSchema, clippedParquetSchema,
           splits, debugDumpPrefix, debugDumpAlways,
-          deletionVectors.get, deletionVectorRowCounts.get,
-          rowGroupOffsets.getOrElse(Array()), rowGroupNumRows.getOrElse(Array()))
+          deletionVectors.get, deletionVectorRowCounts.getOrElse(Array(Integer.MAX_VALUE)),
+          rowGroupOffsets.orNull, rowGroupNumRows.orNull)
       } else {
         ParquetTableReader(conf, chunkSizeByteLimit, maxChunkedReaderMemoryUsageSizeBytes,
           opts, buffers, metrics, dateRebaseMode, timestampRebaseMode, hasInt96Timestamps,
@@ -3213,24 +3213,19 @@ case class DeletionVectorTableReader(
 
   logError("Using DeletionVectorTableReader for reading Parquet with deletion vectors")
 
-  // Use reflection to access private toCppParquetOptions method
-  private[this] val optionsHandle: Long = {
-    val method = classOf[com.nvidia.spark.rapids.jni.DeletionVector]
-      .getDeclaredMethod("toCppParquetOptions", classOf[ParquetOptions])
-    method.setAccessible(true)
-    method.invoke(null, opts).asInstanceOf[Long]
-  }
-  
   private[this] val reader = if (deletionVectors.length == 1) {
     // Single deletion vector
-    new com.nvidia.spark.rapids.jni.DeletionVector.ChunkedReader(chunkSizeByteLimit,
-      maxChunkedReaderMemoryUsageSizeBytes, optionsHandle, deletionVectors(0),
-      rowGroupOffsets, rowGroupNumRows)
+    new com.nvidia.spark.rapids.jni.DeletionVector.ParquetChunkedReader(chunkSizeByteLimit,
+      maxChunkedReaderMemoryUsageSizeBytes, opts,
+      deletionVectors(0),
+      rowGroupOffsets, rowGroupNumRows, buffers:_*)
   } else {
     // Multiple deletion vectors for coalescing
-    new com.nvidia.spark.rapids.jni.DeletionVector.ChunkedReader(chunkSizeByteLimit,
-      maxChunkedReaderMemoryUsageSizeBytes, optionsHandle, deletionVectors,
-      deletionVectorRowCounts, rowGroupOffsets, rowGroupNumRows)
+//    new com.nvidia.spark.rapids.jni.DeletionVector.ChunkedReader(chunkSizeByteLimit,
+//      maxChunkedReaderMemoryUsageSizeBytes, optionsHandle, deletionVectors,
+//      deletionVectorRowCounts, rowGroupOffsets, rowGroupNumRows)
+    throw new UnsupportedOperationException(
+      "Multiple deletion vectors in chunked mode not yet supported")
   }
 
   private[this] lazy val splitsString = splits.mkString("; ")

@@ -87,13 +87,14 @@ def test_delta_scan_read(spark_tmp_path):
 @delta_lake
 @ignore_order(local=True)
 @pytest.mark.parametrize("use_cdf", [True, False], ids=idfn)
+@pytest.mark.parametrize("use_chunked", [True, False], ids=idfn)
 @pytest.mark.skipif(not supports_delta_lake_deletion_vectors(),
                     reason="Delta Lake deletion vector support is required")
-def test_delta_deletion_vector_read(spark_tmp_path, use_cdf):
+def test_delta_deletion_vector_read(spark_tmp_path, use_cdf, use_chunked):
     data_path = spark_tmp_path + "/DELTA_DATA"
     conf = {"spark.databricks.delta.delete.deletionVectors.persistent": "true",
             "spark.rapids.sql.format.parquet.reader.type": "PERFILE",
-            "spark.rapids.sql.reader.chunked": "false",
+            "spark.rapids.sql.reader.chunked": f"{str(use_chunked).lower()}",
             "delta.deletionVectors.useMetadataRowIndex": "true"}
 
     repeat_count = 5
