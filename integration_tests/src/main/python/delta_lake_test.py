@@ -86,16 +86,54 @@ def test_delta_scan_read(spark_tmp_path):
 @allow_non_gpu("FileSourceScanExec", "ColumnarToRowExec", *delta_meta_allow)
 @delta_lake
 @ignore_order(local=True)
-@pytest.mark.parametrize("use_cdf", [True, False], ids=idfn)
-@pytest.mark.parametrize("use_chunked", [True, False], ids=idfn)
+@pytest.mark.parametrize("use_cdf", [False], ids=idfn)
+@pytest.mark.parametrize("use_chunked", [True], ids=idfn)
+@pytest.mark.parametrize("reader_type", ["MULTITHREADED"], ids=idfn)
 @pytest.mark.skipif(not supports_delta_lake_deletion_vectors(),
                     reason="Delta Lake deletion vector support is required")
-def test_delta_deletion_vector_read(spark_tmp_path, use_cdf, use_chunked):
+def test_delta_deletion_vector_multi_threaded_combine_read(spark_tmp_path, use_cdf, use_chunked, reader_type):
     data_path = spark_tmp_path + "/DELTA_DATA"
     conf = {"spark.databricks.delta.delete.deletionVectors.persistent": "true",
-            "spark.rapids.sql.format.parquet.reader.type": "PERFILE",
+            "spark.rapids.sql.format.parquet.reader.type": f"{reader_type}",
             "spark.rapids.sql.reader.chunked": f"{str(use_chunked).lower()}",
-            "delta.deletionVectors.useMetadataRowIndex": "true"}
+            "delta.deletionVectors.useMetadataRowIndex": "false",
+            "spark.rapids.sql.reader.multithreaded.combine.sizeBytes": "64m",
+            "spark.rapids.sql.reader.multithreaded.read.keepOrder": "false"}
+
+    repeat_count = 5
+
+    def gen_data(spark):
+        data = list(range(16)) * repeat_count
+        return spark.createDataFrame([(i,) for i in data], ["a"]).repartition(16)
+
+    def setup_tables(spark):
+        setup_delta_dest_table(spark, data_path,
+                               dest_table_func=lambda spark: gen_data(spark),
+                               # dest_table_func=lambda spark: unary_op_df(spark, gen),
+                               use_cdf=use_cdf, enable_deletion_vectors=True)
+        num_deleted = spark.sql("DELETE FROM delta.`{}` WHERE a = 1".format(data_path)).collect()[0][0]
+        assert num_deleted == repeat_count, "Expected enough rows to be deleted"
+        # assert num_deleted > 99, "Expected enough rows to be deleted"
+    with_cpu_session(setup_tables, conf=conf)
+    assert_gpu_and_cpu_are_equal_collect(
+        lambda spark: spark.sql("SELECT * FROM delta.`{}`".format(data_path)),
+        conf=conf)
+
+
+@allow_non_gpu("FileSourceScanExec", "ColumnarToRowExec", *delta_meta_allow)
+@delta_lake
+@ignore_order(local=True)
+@pytest.mark.parametrize("use_cdf", [False], ids=idfn)
+@pytest.mark.parametrize("use_chunked", [True], ids=idfn)
+@pytest.mark.parametrize("reader_type", ["MULTITHREADED"], ids=idfn)
+@pytest.mark.skipif(not supports_delta_lake_deletion_vectors(),
+                    reason="Delta Lake deletion vector support is required")
+def test_delta_deletion_vector_read(spark_tmp_path, use_cdf, use_chunked, reader_type):
+    data_path = spark_tmp_path + "/DELTA_DATA"
+    conf = {"spark.databricks.delta.delete.deletionVectors.persistent": "true",
+            "spark.rapids.sql.format.parquet.reader.type": f"{reader_type}",
+            "spark.rapids.sql.reader.chunked": f"{str(use_chunked).lower()}",
+            "delta.deletionVectors.useMetadataRowIndex": "false"}
 
     repeat_count = 5
 

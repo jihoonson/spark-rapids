@@ -1182,7 +1182,7 @@ case class GpuParquetMultiFilePartitionReaderFactory(
     }
     val combineConf = CombineConf(combineThresholdSize, combineWaitTime)
     val poolConf = poolConfBuilder.build()
-    val reader = new MultiFileCloudParquetPartitionReader(fileIO, conf, files, filterFunc,
+    val reader = createBaseMultiFileCloudReader(fileIO, conf, files, filterFunc,
       isCaseSensitive,
       debugDumpPrefix, debugDumpAlways, maxReadBatchSizeRows, maxReadBatchSizeBytes,
       targetBatchSizeBytes, maxGpuColumnSizeBytes,
@@ -1198,6 +1198,59 @@ case class GpuParquetMultiFilePartitionReaderFactory(
       reader.eagerPrefetchInit()
     }
     reader
+  }
+
+  protected def createBaseMultiFileCloudReader(
+      fileIO: RapidsFileIO,
+      conf: Configuration,
+      files: Array[PartitionedFile],
+      filterFunc: PartitionedFile => ParquetFileInfoWithBlockMeta,
+      isSchemaCaseSensitive: Boolean,
+      debugDumpPrefix: Option[String],
+      debugDumpAlways: Boolean,
+      maxReadBatchSizeRows: Integer,
+      maxReadBatchSizeBytes: Long,
+      targetBatchSizeBytes: Long,
+      maxGpuColumnSizeBytes: Long,
+      useChunkedReader: Boolean,
+      maxChunkedReaderMemoryUsageSizeBytes: Long,
+      compressCfg: CpuCompressionConfig,
+      execMetrics: Map[String, GpuMetric],
+      partitionSchema: StructType,
+      poolConf: ThreadPoolConf,
+      maxNumFileProcessed: Int,
+      ignoreMissingFiles: Boolean,
+      ignoreCorruptFiles: Boolean,
+      useFieldId: Boolean,
+      queryUsesInputFile: Boolean,
+      keepReadsInOrder: Boolean,
+      combineConf: CombineConf
+  ): MultiFileCloudParquetPartitionReader = {
+    new MultiFileCloudParquetPartitionReader(
+      fileIO,
+      conf,
+      files,
+      filterFunc,
+      isSchemaCaseSensitive,
+      debugDumpPrefix,
+      debugDumpAlways,
+      maxReadBatchSizeRows,
+      maxReadBatchSizeBytes,
+      targetBatchSizeBytes,
+      maxGpuColumnSizeBytes,
+      useChunkedReader,
+      maxChunkedReaderMemoryUsageSizeBytes,
+      compressCfg,
+      execMetrics,
+      partitionSchema,
+      poolConf,
+      maxNumFileProcessed,
+      ignoreMissingFiles,
+      ignoreCorruptFiles,
+      useFieldId,
+      queryUsesInputFile,
+      keepReadsInOrder,
+      combineConf)
   }
 
   private def filterBlocksForCoalescingReader(
@@ -1309,12 +1362,42 @@ case class GpuParquetMultiFilePartitionReaderFactory(
       }
     }
 
-    new MultiFileParquetPartitionReader(fileIO, conf, files, clippedBlocks.toSeq, isCaseSensitive,
+    createBaseMultiFileCoalescingReader(fileIO, conf, files, clippedBlocks.toSeq, isCaseSensitive,
       debugDumpPrefix, debugDumpAlways, maxReadBatchSizeRows, maxReadBatchSizeBytes,
       targetBatchSizeBytes, maxGpuColumnSizeBytes,
       useChunkedReader, maxChunkedReaderMemoryUsageSizeBytes, compressCfg,
       metrics, partitionSchema, poolConf, ignoreMissingFiles, ignoreCorruptFiles,
       readUseFieldId)
+  }
+
+  protected def createBaseMultiFileCoalescingReader(
+      fileIO: RapidsFileIO,
+      conf: Configuration,
+      splits: Array[PartitionedFile],
+      clippedBlocks: Seq[ParquetSingleDataBlockMeta],
+      isSchemaCaseSensitive: Boolean,
+      debugDumpPrefix: Option[String],
+      debugDumpAlways: Boolean,
+      maxReadBatchSizeRows: Integer,
+      maxReadBatchSizeBytes: Long,
+      targetBatchSizeBytes: Long,
+      maxGpuColumnSizeBytes: Long,
+      useChunkedReader: Boolean,
+      maxChunkedReaderMemoryUsageSizeBytes: Long,
+      compressCfg: CpuCompressionConfig,
+      execMetrics: Map[String, GpuMetric],
+      partitionSchema: StructType,
+      poolConf: ThreadPoolConf,
+      ignoreMissingFiles: Boolean,
+      ignoreCorruptFiles: Boolean,
+      useFieldId: Boolean
+  ): MultiFileParquetPartitionReader = {
+    new MultiFileParquetPartitionReader(fileIO, conf, splits, clippedBlocks, isSchemaCaseSensitive,
+      debugDumpPrefix, debugDumpAlways, maxReadBatchSizeRows, maxReadBatchSizeBytes,
+      targetBatchSizeBytes, maxGpuColumnSizeBytes,
+      useChunkedReader, maxChunkedReaderMemoryUsageSizeBytes, compressCfg,
+      execMetrics, partitionSchema, poolConf, ignoreMissingFiles, ignoreCorruptFiles,
+      useFieldId)
   }
 
   /**
@@ -2257,9 +2340,7 @@ class MultiFileParquetPartitionReader(
     poolConf: ThreadPoolConf,
     ignoreMissingFiles: Boolean,
     ignoreCorruptFiles: Boolean,
-    useFieldId: Boolean,
-    deletionVectors: Option[Array[Array[Byte]]] = None,
-    deletionVectorRowCounts: Option[Array[Int]] = None)
+    useFieldId: Boolean)
   extends MultiFileCoalescingPartitionReaderBase(conf, clippedBlocks,
     partitionSchema, maxReadBatchSizeRows, maxReadBatchSizeBytes, maxGpuColumnSizeBytes,
     poolConf, execMetrics)
@@ -2950,7 +3031,7 @@ class MultiFileCloudParquetPartitionReader(
     case _ => throw new RuntimeException("Wrong HostMemoryBuffersWithMetaData")
   }
 
-  private def readBufferToBatches(
+  protected def readBufferToBatches(
       dateRebaseMode: DateTimeRebaseMode,
       timestampRebaseMode: DateTimeRebaseMode,
       hasInt96Timestamps: Boolean,
@@ -3070,7 +3151,7 @@ object MakeParquetTableProducer extends Logging {
             NvtxIdWithMetrics(NvtxRegistry.PARQUET_DECODE, metrics(GPU_DECODE_TIME)) {
               if (deletionVectors.isDefined && deletionVectors.get.length == 1) {
                // Single deletion vector - use simpler API
-                com.nvidia.spark.rapids.jni.DeletionVector.readParquet(
+                DeltaLake.readDeltaParquet(
                   opts, deletionVectors.get(0),
                   rowGroupOffsets.orNull, rowGroupNumRows.orNull,
                   buffers:_*)
@@ -3215,7 +3296,7 @@ case class DeletionVectorTableReader(
 
   private[this] val reader = if (deletionVectors.length == 1) {
     // Single deletion vector
-    new com.nvidia.spark.rapids.jni.DeletionVector.ParquetChunkedReader(chunkSizeByteLimit,
+    new DeltaLake.ParquetChunkedReader(chunkSizeByteLimit,
       maxChunkedReaderMemoryUsageSizeBytes, opts,
       deletionVectors(0),
       rowGroupOffsets, rowGroupNumRows, buffers:_*)

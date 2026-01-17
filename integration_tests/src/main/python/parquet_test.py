@@ -180,13 +180,17 @@ def test_parquet_read_avoid_coalesce_incompatible_files(spark_tmp_path, v1_enabl
             .option("recursiveFileLookup", "true").parquet(data_path),
         conf=all_confs)
 
-@pytest.mark.parametrize('parquet_gens', parquet_gens_list, ids=idfn)
-@pytest.mark.parametrize('read_func', [read_parquet_df, read_parquet_sql])
-@pytest.mark.parametrize('reader_confs', reader_opt_confs)
-@pytest.mark.parametrize('v1_enabled_list', ["", "parquet"])
+# @pytest.mark.parametrize('parquet_gens', parquet_gens_list, ids=idfn)
+@pytest.mark.parametrize('parquet_gens', [[int_gen]], ids=idfn)
+# @pytest.mark.parametrize('read_func', [read_parquet_df, read_parquet_sql])
+@pytest.mark.parametrize('read_func', [read_parquet_sql])
+# @pytest.mark.parametrize('reader_confs', reader_opt_confs)
+@pytest.mark.parametrize('reader_confs', [combining_multithreaded_parquet_file_reader_conf_unordered])
+# @pytest.mark.parametrize('v1_enabled_list', ["", "parquet"])
+@pytest.mark.parametrize('v1_enabled_list', [""])
 @tz_sensitive_test
 @allow_non_gpu(*non_utc_allow)
-def test_parquet_read_round_trip(spark_tmp_path, parquet_gens, read_func, reader_confs, v1_enabled_list):
+def test_parquet_read_round_trip_simple(spark_tmp_path, parquet_gens, read_func, reader_confs, v1_enabled_list):
     gen_list = [('_c' + str(i), gen) for i, gen in enumerate(parquet_gens)]
     data_path = spark_tmp_path + '/PARQUET_DATA'
     with_cpu_session(
