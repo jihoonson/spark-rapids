@@ -3119,7 +3119,7 @@ object MakeParquetTableProducer extends Logging {
       splits: Array[PartitionedFile],
       debugDumpPrefix: Option[String],
       debugDumpAlways: Boolean,
-      deletionVectors: Option[Array[Array[Byte]]] = None,
+      deletionVectors: Option[Array[HostMemoryBuffer]] = None,
       deletionVectorRowCounts: Option[Array[Int]] = None,
       rowGroupOffsets: Option[Array[Long]] = None,
       rowGroupNumRows: Option[Array[Int]] = None
@@ -3152,7 +3152,7 @@ object MakeParquetTableProducer extends Logging {
               if (deletionVectors.isDefined && deletionVectors.get.length == 1) {
                // Single deletion vector - use simpler API
                 DeltaLake.readDeltaParquet(
-                  opts, deletionVectors.get(0),
+                  opts, deletionVectors.get,
                   rowGroupOffsets.orNull, rowGroupNumRows.orNull,
                   buffers:_*)
               } else if (deletionVectors.isDefined && deletionVectors.get.length > 1) {
@@ -3287,7 +3287,7 @@ case class DeletionVectorTableReader(
     splits: Array[PartitionedFile],
     debugDumpPrefix: Option[String],
     debugDumpAlways: Boolean,
-    deletionVectors: Array[Array[Byte]],
+    deletionVectors: Array[HostMemoryBuffer],
     deletionVectorRowCounts: Array[Int],
     rowGroupOffsets: Array[Long],
     rowGroupNumRows: Array[Int]) extends GpuDataProducer[Table] with Logging {
@@ -3298,7 +3298,7 @@ case class DeletionVectorTableReader(
     // Single deletion vector
     new DeltaLake.ParquetChunkedReader(chunkSizeByteLimit,
       maxChunkedReaderMemoryUsageSizeBytes, opts,
-      deletionVectors(0),
+      deletionVectors,
       rowGroupOffsets, rowGroupNumRows, buffers:_*)
   } else {
     // Multiple deletion vectors for coalescing

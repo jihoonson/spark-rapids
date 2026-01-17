@@ -124,8 +124,8 @@ def test_delta_deletion_vector_multi_threaded_combine_read(spark_tmp_path, use_c
 @delta_lake
 @ignore_order(local=True)
 @pytest.mark.parametrize("use_cdf", [False], ids=idfn)
-@pytest.mark.parametrize("use_chunked", [True], ids=idfn)
-@pytest.mark.parametrize("reader_type", ["MULTITHREADED"], ids=idfn)
+@pytest.mark.parametrize("use_chunked", [True, False], ids=idfn)
+@pytest.mark.parametrize("reader_type", ["PERFILE", "MULTITHREADED"], ids=idfn)
 @pytest.mark.skipif(not supports_delta_lake_deletion_vectors(),
                     reason="Delta Lake deletion vector support is required")
 def test_delta_deletion_vector_read(spark_tmp_path, use_cdf, use_chunked, reader_type):
@@ -135,10 +135,10 @@ def test_delta_deletion_vector_read(spark_tmp_path, use_cdf, use_chunked, reader
             "spark.rapids.sql.reader.chunked": f"{str(use_chunked).lower()}",
             "delta.deletionVectors.useMetadataRowIndex": "false"}
 
-    repeat_count = 5
+    repeat_count = 50
 
     def gen_data(spark):
-        data = list(range(16)) * repeat_count
+        data = list(range(64)) * repeat_count
         return spark.createDataFrame([(i,) for i in data], ["a"])
 
     def setup_tables(spark):

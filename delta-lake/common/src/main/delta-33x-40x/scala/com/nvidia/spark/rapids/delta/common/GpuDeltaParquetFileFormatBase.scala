@@ -51,7 +51,8 @@ import org.apache.spark.sql.types.{LongType, MetadataBuilder, StructType}
 import org.apache.spark.sql.vectorized.{ColumnarBatch, ColumnVector => SparkVector}
 import org.apache.spark.util.SerializableConfiguration
 
-import java.nio.{ByteBuffer, ByteOrder}
+//import java.nio.{ByteBuffer, ByteOrder}
+import java.io.ByteArrayInputStream
 //import java.util.UUID
 //import java.io.FileOutputStream
 
@@ -750,17 +751,18 @@ class DeltaMultiFileCloudNativeParquetPartitionReader(
 
 object RapidsDeletionVectorUtils {
 
-  lazy val SERIALIZED_EMPTY_BITMAP: Array[Byte] = {
-    val buffer = ByteBuffer.allocate(8)
-    buffer.order(ByteOrder.LITTLE_ENDIAN)
-    buffer.putLong(0)
-    buffer.array()
+  lazy val SERIALIZED_EMPTY_BITMAP: HostMemoryBuffer = {
+    val buffer = HostMemoryBuffer.allocate(8)
+    buffer.setLong(0, 0L)
+    buffer
   }
+
+  val MAGIC_NUMBER_BYTE_SIZE = 4
 
   def readDeletionVector(conf: Configuration,
       partitionedFile: PartitionedFile,
       tablePath: String,
-      logger: Option[String => Unit] = None): Array[Byte] = {
+      logger: Option[String => Unit] = None): HostMemoryBuffer = {
     // Fetch the DV descriptor from the partitioned file
     val dvDescriptorOpt = partitionedFile.otherConstantMetadataColumnValues
       .get(FILE_ROW_INDEX_FILTER_ID_ENCODED)
@@ -772,10 +774,15 @@ object RapidsDeletionVectorUtils {
       val dvStore = new HadoopFileSystemDVStore(conf)
       val bitmap = StoredBitmap.create(dvDesc, new Path(tablePath)).load(dvStore)
       logger.map(l => l("bitmap cardinality: " + bitmap.cardinality))
-      val serialized = bitmap.serializeAsByteArray(RoaringBitmapArrayFormat.Portable)
-      val serializedInStandard: Array[Byte] = new Array[Byte](serialized.length - 4)
+      val serializedDeltaBitmap = bitmap.serializeAsByteArray(RoaringBitmapArrayFormat.Portable)
+      val serializedStandardBitmapSize = serializedDeltaBitmap.length - MAGIC_NUMBER_BYTE_SIZE
+      val serializedStandardBitmap = HostMemoryBuffer.allocate(serializedStandardBitmapSize)
       // Skip the magic number at the start
-      System.arraycopy(serialized, 4, serializedInStandard, 0, serializedInStandard.length)
+      withResource(new ByteArrayInputStream(serializedDeltaBitmap, MAGIC_NUMBER_BYTE_SIZE,
+        serializedStandardBitmapSize)) { bais =>
+        serializedStandardBitmap.copyFromStream(0, bais, serializedStandardBitmapSize)
+      }
+
 //      withResource(new FileOutputStream("/home/jihoons/dv_serialized_" + UUID.randomUUID()
 //        .toString + ".bin")) { fos =>
 //        fos.write(serializedInStandard)
@@ -786,7 +793,7 @@ object RapidsDeletionVectorUtils {
 
       filterTypeOpt.get match {
         case RowIndexFilterType.IF_CONTAINED =>
-          serializedInStandard
+          serializedStandardBitmap
         case RowIndexFilterType.IF_NOT_CONTAINED =>
           throw new RuntimeException("TODO: should return the complement deletion vector")
         case unexpectedFilterType => throw new IllegalStateException(
