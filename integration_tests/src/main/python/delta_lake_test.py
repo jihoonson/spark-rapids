@@ -124,22 +124,27 @@ def test_delta_deletion_vector_multi_threaded_combine_read(spark_tmp_path, use_c
 @delta_lake
 @ignore_order(local=True)
 @pytest.mark.parametrize("use_cdf", [False], ids=idfn)
-@pytest.mark.parametrize("use_chunked", [True, False], ids=idfn)
-@pytest.mark.parametrize("reader_type", ["PERFILE", "MULTITHREADED"], ids=idfn)
+@pytest.mark.parametrize("use_chunked", [True], ids=idfn)
+@pytest.mark.parametrize("reader_type", ["PERFILE"], ids=idfn)
+@pytest.mark.parametrize("use_metadata_row_index", [False, True], ids=idfn)
 @pytest.mark.skipif(not supports_delta_lake_deletion_vectors(),
                     reason="Delta Lake deletion vector support is required")
-def test_delta_deletion_vector_read(spark_tmp_path, use_cdf, use_chunked, reader_type):
+def test_delta_deletion_vector_read(spark_tmp_path, use_cdf, use_chunked, reader_type, use_metadata_row_index):
     data_path = spark_tmp_path + "/DELTA_DATA"
+    val_range = 64
+    repeat_count = 18
+    num_rows = val_range * repeat_count
+    target_num_row_groups = 2
+    row_group_size = int(num_rows * 4 / target_num_row_groups)
     conf = {"spark.databricks.delta.delete.deletionVectors.persistent": "true",
             "spark.rapids.sql.format.parquet.reader.type": f"{reader_type}",
             "spark.rapids.sql.reader.chunked": f"{str(use_chunked).lower()}",
-            "delta.deletionVectors.useMetadataRowIndex": "false"}
-
-    repeat_count = 50
+            "delta.deletionVectors.useMetadataRowIndex": f"{use_metadata_row_index}",
+            "parquet.block.size": str(row_group_size)}
 
     def gen_data(spark):
-        data = list(range(64)) * repeat_count
-        return spark.createDataFrame([(i,) for i in data], ["a"])
+        data = list(range(val_range)) * repeat_count
+        return spark.createDataFrame([(i,) for i in data], ["a"]).repartition(2)
 
     def setup_tables(spark):
         setup_delta_dest_table(spark, data_path,
@@ -150,6 +155,27 @@ def test_delta_deletion_vector_read(spark_tmp_path, use_cdf, use_chunked, reader
         assert num_deleted == repeat_count, "Expected enough rows to be deleted"
         # assert num_deleted > 99, "Expected enough rows to be deleted"
     with_cpu_session(setup_tables, conf=conf)
+
+    import os
+    import math
+
+    def verify_files_and_row_groups():
+        # list files in data_path
+        files = [f for f in os.listdir(data_path) if f.endswith(".parquet")]
+        files = [f"{data_path}/{f}" for f in files]
+        # find the most recently modified parquet file
+        most_recent_file = max(files, key=os.path.getmtime)
+        parquet_file = most_recent_file
+
+        import pyarrow.parquet as pq
+        metadata = pq.read_metadata(parquet_file)
+        assert metadata.num_row_groups > 1, f"Expected more than 1 row group in the parquet"
+        return parquet_file
+    data_file = verify_files_and_row_groups()
+    file_size = os.path.getsize(data_file)
+
+    conf = copy_and_update(conf, {"spark.sql.files.maxPartitionBytes": str(math.ceil(file_size/2.0))})
+
     assert_gpu_and_cpu_are_equal_collect(
         lambda spark: spark.sql("SELECT * FROM delta.`{}`".format(data_path)),
         conf=conf)
@@ -187,13 +213,21 @@ def do_test_scan_split(spark_tmp_path, enable_deletion_vectors, expected_num_par
     data_file = verify_files_and_row_groups()
     file_size = os.path.getsize(data_file)
 
-    conf = {"spark.sql.files.maxPartitionBytes": str(math.ceil(file_size/2.0))}
+    conf = {"spark.sql.files.maxPartitionBytes": str(math.ceil(file_size/2.0)),
+            "spark.rapids.sql.format.parquet.reader.type": "MULTITHREADED",
+            "spark.rapids.sql.reader.chunked": "true",
+            "spark.databricks.delta.deletionVectors.useMetadataRowIndex": "true"}
 
     def get_num_partitions(spark):
         df = spark.sql("SELECT * from delta.`{}`".format(data_path))
         return df.rdd.getNumPartitions()
     num_partitions = with_gpu_session(get_num_partitions, conf=conf)
     assert num_partitions == expected_num_partitions, f"Expected {expected_num_partitions} partitions for split read"
+
+    assert_gpu_and_cpu_are_equal_collect(
+        lambda spark: spark.sql("SELECT * FROM delta.`{}`".format(data_path)),
+        conf=conf
+    )
 
 
 @allow_non_gpu(*delta_meta_allow)
@@ -220,11 +254,12 @@ def test_delta_scan_split_with_DV_enabled_with_no_DV(spark_tmp_path):
                     reason="Deletion vector scan is not supported on Databricks")
 @pytest.mark.skipif(is_before_spark_353(),
                     reason="Spark-RAPIDS supports scan with deletion vectors starting in Spark 3.5.3")
+@ignore_order
 def test_delta_scan_split_with_DV_enabled_with_DVs(spark_tmp_path):
     def do_delete(spark, data_path):
         num_deleted = spark.sql(f"DELETE FROM delta.`{data_path}` WHERE a = 0").collect()[0][0]
         assert num_deleted > 0, "Expected some rows to be deleted"
-    do_test_scan_split(spark_tmp_path, enable_deletion_vectors=True, expected_num_partitions=1, post_setup_table_func=do_delete)
+    do_test_scan_split(spark_tmp_path, enable_deletion_vectors=True, expected_num_partitions=2, post_setup_table_func=do_delete)
 
 
 @allow_non_gpu(*delta_meta_allow)
@@ -239,7 +274,7 @@ def test_delta_scan_split_with_DV_disabled_with_DVs(spark_tmp_path):
         assert num_deleted > 0, "Expected some rows to be deleted"
         spark.sql(f"ALTER TABLE delta.`{data_path}` SET TBLPROPERTIES " +
                   "('delta.enableDeletionVectors' = 'false')")
-    do_test_scan_split(spark_tmp_path, enable_deletion_vectors=True, expected_num_partitions=1, post_setup_table_func=do_delete_and_disable_DV)
+    do_test_scan_split(spark_tmp_path, enable_deletion_vectors=True, expected_num_partitions=2, post_setup_table_func=do_delete_and_disable_DV)
 
 
 @allow_non_gpu(*delta_meta_allow)

@@ -42,6 +42,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArrayFormat, StoredBitmap}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.dv.HadoopFileSystemDVStore
 import org.apache.spark.sql.execution.datasources.PartitionedFile
 import org.apache.spark.sql.internal.SQLConf
@@ -229,12 +230,28 @@ class GpuDeltaParquetFileFormatBase(
             val (dataBuffer, _) = metrics(BUFFER_TIME).ns {
               readPartFile(currentChunkedBlocks, clippedParquetSchema, filePath)
             }
-            val maybeSerializedDV = tablePath.map(tp =>
-              Array(RapidsDeletionVectorUtils.readDeletionVector(conf, split, tp)))
             if (dataBuffer.length == 0) {
               dataBuffer.close()
               CachedGpuBatchIterator(EmptyTableReader, colTypes)
             } else {
+              val maybeSerializedDV = tablePath.map(tp =>
+                Array(RapidsDeletionVectorUtils.readDeletionVector(conf, split, tp)))
+//              val dvRowCounts = currentChunkedBlocks.map(_.getRowCount).sum
+//              if (!dvRowCounts.isValidInt) {
+//                throw new IllegalStateException(
+//                  s"Total row count $dvRowCounts from deletion vector is not a valid int")
+//              }
+//              val rowGroupOffsets = currentChunkedBlocks.map(_.getRowIndexOffset)
+//              if (rowGroupOffsets.find(offset => offset == -1).isDefined) {
+//                throw new IllegalStateException("Found invalid row group offset")
+//              }
+//              val rowGroupNumRows = currentChunkedBlocks.map(_.getRowCount)
+//              if (rowGroupNumRows.find(numRows => !numRows.isValidInt).isDefined) {
+//                throw new IllegalStateException("Found invalid row group num rows")
+//              }
+              val (dvRowCounts, rowGroupOffsets, rowGroupNumRows) =
+                RapidsDeletionVectorUtils.getRowGroupMetadata(currentChunkedBlocks)
+
               RmmRapidsRetryIterator.withRetryNoSplit(dataBuffer) { _ =>
                 // MakeParquetTableProducer will try to close the hostBuf
                 val hostBuf = dataBuffer.getDataHostBuffer()
@@ -251,11 +268,9 @@ class GpuDeltaParquetFileFormatBase(
                   clippedParquetSchema, Array(split),
                   debugDumpPrefix, debugDumpAlways,
                   maybeSerializedDV,
-                  // TODO: this should be the total row count of the row groups to read
-                  deletionVectorRowCounts = None,
-                  // TODO: set these properly
-                  rowGroupOffsets = None,
-                  rowGroupNumRows = None
+                  deletionVectorRowCounts = Some(Array(dvRowCounts)),
+                  rowGroupOffsets = Some(rowGroupOffsets),
+                  rowGroupNumRows = Some(rowGroupNumRows)
                 )
                 CachedGpuBatchIterator(producer, colTypes)
               }
@@ -295,7 +310,6 @@ class GpuDeltaParquetFileFormatBase(
       metrics.get(FILTER_TIME).foreach {
         _ += (System.nanoTime() - startTime)
       }
-      // TODO: push the filter down only if filters exist
       new DeltaParquetPartitionReader(fileIO, conf, file, singleFileInfo.filePath, singleFileInfo.blocks,
         singleFileInfo.schema, isCaseSensitive, readDataSchema, debugDumpPrefix, debugDumpAlways,
         maxReadBatchSizeRows, maxReadBatchSizeBytes, targetSizeBytes,
@@ -407,6 +421,8 @@ class GpuDeltaParquetFileFormatBase(
         "https://nvidia.github.io/spark-rapids/docs/additional-functionality/advanced_configs.html")
     }
 
+    val useMetadataRowIndexConf = DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX
+    val useMetadataRowIndex = fileScan.relation.sparkSession.sessionState.conf.getConf(useMetadataRowIndexConf)
     val poolConfBuilder = ThreadPoolConfBuilder(fileScan.rapidsConf)
     new DeltaMultiFileReaderFactory(
       fileScan.conf,
@@ -419,7 +435,7 @@ class GpuDeltaParquetFileFormatBase(
       poolConfBuilder,
       fileScan.allMetrics,
       fileScan.queryUsesInputFile,
-      useMetadataRowIndex = false,
+      useMetadataRowIndex = useMetadataRowIndex,
       tablePath)
   }
 
@@ -695,7 +711,8 @@ class DeltaMultiFileCloudNativeParquetPartitionReader(
       readDataSchema: StructType,
       partedFile: PartitionedFile,
       hostBuffers: Array[SpillableHostBuffer],
-      allPartValues: Option[Array[(Long, InternalRow)]]): Iterator[ColumnarBatch] = {
+      allPartValues: Option[Array[(Long, InternalRow)]],
+      blockMetadata: Seq[DataBlockBase]): Iterator[ColumnarBatch] = {
 
     val parseOpts = closeOnExcept(hostBuffers) { _ =>
       getParquetOptions(readDataSchema, clippedSchema, useFieldId)
@@ -708,6 +725,10 @@ class DeltaMultiFileCloudNativeParquetPartitionReader(
 
     val maybeSerializedDV = tablePath.map(tp =>
       Array(RapidsDeletionVectorUtils.readDeletionVector(conf, partedFile, tp, Some(log))))
+
+    val (dvRowCounts, rowGroupOffsets, rowGroupNumRows) =
+      RapidsDeletionVectorUtils.getRowGroupMetadata(
+        blockMetadata.map(_.asInstanceOf[ParquetDataBlock].dataBlock))
 
     withResource(hostBuffers) { _ =>
       RmmRapidsRetryIterator.withRetryNoSplit {
@@ -725,7 +746,10 @@ class DeltaMultiFileCloudNativeParquetPartitionReader(
           dateRebaseMode, timestampRebaseMode, hasInt96Timestamps,
           isSchemaCaseSensitive, useFieldId, readDataSchema, clippedSchema, files,
           debugDumpPrefix, debugDumpAlways,
-          maybeSerializedDV)
+          maybeSerializedDV,
+          deletionVectorRowCounts = Some(Array(dvRowCounts)),
+          rowGroupOffsets = Some(rowGroupOffsets),
+          rowGroupNumRows = Some(rowGroupNumRows))
 
         val batchIter = CachedGpuBatchIterator(tableReader, colTypes)
 
@@ -807,6 +831,23 @@ object RapidsDeletionVectorUtils {
       logger.map(l => l("No deletion vector found for the file"))
       SERIALIZED_EMPTY_BITMAP
     }
+  }
+
+  def getRowGroupMetadata(blocks: Seq[BlockMetaData]): (Int, Array[Long], Array[Int]) = {
+    val dvRowCounts = blocks.map(_.getRowCount).sum
+    if (!dvRowCounts.isValidInt) {
+      throw new IllegalStateException(
+        s"Total row count $dvRowCounts from deletion vector is not a valid int")
+    }
+    val rowGroupOffsets = blocks.map(_.getRowIndexOffset)
+    if (rowGroupOffsets.find(offset => offset == -1).isDefined) {
+      throw new IllegalStateException("Found invalid row group offset")
+    }
+    val rowGroupNumRows = blocks.map(_.getRowCount)
+    if (rowGroupNumRows.find(numRows => !numRows.isValidInt).isDefined) {
+      throw new IllegalStateException("Found invalid row group num rows")
+    }
+    (dvRowCounts.toInt, rowGroupOffsets.toArray, rowGroupNumRows.map(_.toInt).toArray)
   }
 
   /**

@@ -1693,7 +1693,8 @@ trait ParquetPartitionReaderBase extends Logging with ScanWithMetrics
           column.getTotalUncompressedSize)
         totalBytesToCopy += columnSize
       }
-      outputBlocks += GpuParquetUtils.newBlockMeta(block.getRowCount, outputColumns.toSeq)
+      outputBlocks += GpuParquetUtils.newBlockMeta(block.getRowIndexOffset,
+        block.getRowCount, outputColumns.toSeq)
     }
     outputBlocks.toSeq
   }
@@ -1930,7 +1931,7 @@ trait ParquetPartitionReaderBase extends Logging with ScanWithMetrics
             columnTotalSize,
             columnTotalSize)
         }
-        GpuParquetUtils.newBlockMeta(block.getRowCount, newColumns.toSeq)
+        GpuParquetUtils.newBlockMeta(block.getRowIndexOffset, block.getRowCount, newColumns.toSeq)
       }
       newBlocks
     }
@@ -3011,7 +3012,8 @@ class MultiFileCloudParquetPartitionReader(
       val batchIter = try {
         readBufferToBatches(buffer.dateRebaseMode,
           buffer.timestampRebaseMode, buffer.hasInt96Timestamps, buffer.clippedSchema,
-          buffer.readSchema, buffer.partitionedFile, hmbAndInfo.hmbs, buffer.allPartValues)
+          buffer.readSchema, buffer.partitionedFile, hmbAndInfo.hmbs, buffer.allPartValues,
+          hmbAndInfo.blockMeta)
       } finally {
         // If there are more buffers, we will release the resource after reading all batches,
         // in case of releasing the resource too early.
@@ -3039,7 +3041,8 @@ class MultiFileCloudParquetPartitionReader(
       readDataSchema: StructType,
       partedFile: PartitionedFile,
       hostBuffers: Array[SpillableHostBuffer],
-      allPartValues: Option[Array[(Long, InternalRow)]]): Iterator[ColumnarBatch] = {
+      allPartValues: Option[Array[(Long, InternalRow)]],
+      blockMetadata: Seq[DataBlockBase]): Iterator[ColumnarBatch] = {
 
     val parseOpts = closeOnExcept(hostBuffers) { _ =>
       getParquetOptions(readDataSchema, clippedSchema, useFieldId)
@@ -3152,7 +3155,7 @@ object MakeParquetTableProducer extends Logging {
               if (deletionVectors.isDefined && deletionVectors.get.length == 1) {
                // Single deletion vector - use simpler API
                 DeltaLake.readDeltaParquet(
-                  opts, deletionVectors.get,
+                  opts, deletionVectors.get, deletionVectorRowCounts.get,
                   rowGroupOffsets.orNull, rowGroupNumRows.orNull,
                   buffers:_*)
               } else if (deletionVectors.isDefined && deletionVectors.get.length > 1) {
