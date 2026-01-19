@@ -236,19 +236,6 @@ class GpuDeltaParquetFileFormatBase(
             } else {
               val maybeSerializedDV = tablePath.map(tp =>
                 Array(RapidsDeletionVectorUtils.readDeletionVector(conf, split, tp)))
-//              val dvRowCounts = currentChunkedBlocks.map(_.getRowCount).sum
-//              if (!dvRowCounts.isValidInt) {
-//                throw new IllegalStateException(
-//                  s"Total row count $dvRowCounts from deletion vector is not a valid int")
-//              }
-//              val rowGroupOffsets = currentChunkedBlocks.map(_.getRowIndexOffset)
-//              if (rowGroupOffsets.find(offset => offset == -1).isDefined) {
-//                throw new IllegalStateException("Found invalid row group offset")
-//              }
-//              val rowGroupNumRows = currentChunkedBlocks.map(_.getRowCount)
-//              if (rowGroupNumRows.find(numRows => !numRows.isValidInt).isDefined) {
-//                throw new IllegalStateException("Found invalid row group num rows")
-//              }
               val (dvRowCounts, rowGroupOffsets, rowGroupNumRows) =
                 RapidsDeletionVectorUtils.getRowGroupMetadata(currentChunkedBlocks)
 
