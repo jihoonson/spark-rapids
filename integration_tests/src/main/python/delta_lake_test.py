@@ -125,8 +125,8 @@ def test_delta_deletion_vector_multi_threaded_combine_read(spark_tmp_path, use_c
 @ignore_order(local=True)
 @pytest.mark.parametrize("use_cdf", [False], ids=idfn)
 @pytest.mark.parametrize("use_chunked", [True, False], ids=idfn)
-@pytest.mark.parametrize("reader_type", ["PERFILE"], ids=idfn)
-@pytest.mark.parametrize("use_metadata_row_index", [False], ids=idfn)
+@pytest.mark.parametrize("reader_type", ["PERFILE", "MULTITHREADED"], ids=idfn)
+@pytest.mark.parametrize("use_metadata_row_index", [False, True], ids=idfn)
 @pytest.mark.skipif(not supports_delta_lake_deletion_vectors(),
                     reason="Delta Lake deletion vector support is required")
 def test_delta_deletion_vector_read(spark_tmp_path, use_cdf, use_chunked, reader_type, use_metadata_row_index):
@@ -135,7 +135,7 @@ def test_delta_deletion_vector_read(spark_tmp_path, use_cdf, use_chunked, reader
     repeat_count = 18
     conf = {"spark.databricks.delta.delete.deletionVectors.persistent": "true",
             "spark.rapids.sql.format.parquet.reader.type": f"{reader_type}",
-            "spark.rapids.sql.reader.chunked": f"{str(use_chunked).lower()}",
+            "spark.rapids.sql.reader.chunked": f"{use_chunked}",
             "spark.databricks.delta.deletionVectors.useMetadataRowIndex": f"{use_metadata_row_index}"}
 
     def gen_data(spark):

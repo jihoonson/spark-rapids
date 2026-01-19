@@ -138,10 +138,11 @@ abstract class DeltaProviderBase extends DeltaIOProvider {
 
   override def pushFilterDownToScan(plan: SparkPlan): SparkPlan = {
     plan.transformUp {
-      case _ @ GpuFilterExec(condition,
-      dvFilterInput @ GpuProjectExec(_, _: GpuFileSourceScanExec, _))
+      case _ @ GpuFilterExec(condition, child)
         if condition.references.exists(_.name == IS_ROW_DELETED_COLUMN_NAME) =>
-      dvFilterInput
+        // TODO: decompose the condition and perform the exact match whether the condition
+        // is the DV predicate or not
+      child
 //        dvFilterInput.copy(projectList = inputList.filter(_.name == IS_ROW_DELETED_COLUMN_NAME))
     }
   }
