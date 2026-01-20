@@ -143,6 +143,7 @@ def test_delta_deletion_vector(spark_tmp_path):
     with_cpu_session(setup_tables)
     with_cpu_session(write_func(data_path))
 
+    # TODO: is this failing because of the missing support for coalecsing reader?
     assert_gpu_and_cpu_are_equal_collect(read_parquet_sql(data_path))
 
 '''

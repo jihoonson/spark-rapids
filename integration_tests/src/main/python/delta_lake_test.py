@@ -96,7 +96,6 @@ def test_delta_deletion_vector_multi_threaded_combine_read(spark_tmp_path, use_c
     conf = {"spark.databricks.delta.delete.deletionVectors.persistent": "true",
             "spark.rapids.sql.format.parquet.reader.type": f"{reader_type}",
             "spark.rapids.sql.reader.chunked": f"{str(use_chunked).lower()}",
-            "delta.deletionVectors.useMetadataRowIndex": "false",
             "spark.rapids.sql.reader.multithreaded.combine.sizeBytes": "64m",
             "spark.rapids.sql.reader.multithreaded.read.keepOrder": "false"}
 

@@ -2502,6 +2502,31 @@ class MultiFileParquetPartitionReader(
   }
 }
 
+trait HostMemoryEmptyMetaData extends HostMemoryBuffersWithMetaDataBase {
+  def bufferSize: Long
+  def dateRebaseMode: DateTimeRebaseMode
+  def timestampRebaseMode: DateTimeRebaseMode
+  def hasInt96Timestamps: Boolean
+  def clippedSchema: MessageType
+  def readSchema: StructType
+  def numRows: Long
+  override def memBuffersAndSizes: Array[SingleHMBAndMeta] =
+    Array(SingleHMBAndMeta.empty(numRows))
+}
+
+trait HostMemoryBuffersWithMetaData extends HostMemoryBuffersWithMetaDataBase {
+  def dateRebaseMode: DateTimeRebaseMode
+  def timestampRebaseMode: DateTimeRebaseMode
+  def hasInt96Timestamps: Boolean
+  def clippedSchema: MessageType
+  def readSchema: StructType
+
+  def withMemBuffersAndSizes(memBuffersAndSizes: Array[SingleHMBAndMeta])
+  : HostMemoryBuffersWithMetaData
+
+  def consumeHeadBuffer(): HostMemoryBuffersWithMetaData
+}
+
 /**
  * A PartitionReader that can read multiple Parquet files in parallel. This is most efficient
  * running in a cloud environment where the I/O of reading is slow.
@@ -2598,13 +2623,13 @@ class MultiFileCloudParquetPartitionReader(
   private case class CombinedEmptyMeta(emptyNumRows: Long, emptyBufferSize: Long,
       emptyTotalBytesRead: Long, allEmpty: Boolean, metaForEmpty: HostMemoryEmptyMetaData)
 
-  private case class CombinedMeta(allPartValues: Array[(Long, InternalRow)],
+  protected case class CombinedMeta(allPartValues: Array[(Long, InternalRow)],
       toCombine: Array[HostMemoryBuffersWithMetaDataBase],
       firstNonEmpty: HostMemoryBuffersWithMetaData)
 
   // assumes all these are ok to combine and have the same metadata for schema
   // and *RebaseMode and timestamp type settings
-  private def doCombineHMBs(combinedMeta: CombinedMeta): HostMemoryBuffersWithMetaDataBase = {
+  protected def doCombineHMBs(combinedMeta: CombinedMeta): HostMemoryBuffersWithMetaDataBase = {
     val toCombineHmbs = combinedMeta.toCombine.filterNot(_.isInstanceOf[HostMemoryEmptyMetaData])
     val metaToUse = combinedMeta.firstNonEmpty
     logDebug(s"Using Combine mode and actually combining, num files ${toCombineHmbs.size} " +
@@ -2661,8 +2686,8 @@ class MultiFileCloudParquetPartitionReader(
       val spHostBufs = buffers.map(b =>
         SpillableHostBuffer(b, b.getLength, SpillPriorities.ACTIVE_BATCHING_PRIORITY))
       val newHmbBufferInfo = SingleHMBAndMeta(spHostBufs.toArray, offset,
-        combinedMeta.allPartValues.map(_._1).sum, Seq.empty)
-      val newHmbMeta = HostMemoryBuffersWithMetaData(
+        combinedMeta.allPartValues.map(_._1).sum, Seq.empty) // TODO: blockMeta is empty
+      val newHmbMeta = ParquetHostMemoryBuffersWithMetaData(
         metaToUse.partitionedFile,
         Array(newHmbBufferInfo),
         offset,
@@ -2769,7 +2794,7 @@ class MultiFileCloudParquetPartitionReader(
 
       if (combinedEmptyMeta.allEmpty) {
         val metaForEmpty = combinedEmptyMeta.metaForEmpty
-        HostMemoryEmptyMetaData(metaForEmpty.partitionedFile, // just pick one since not used
+        ParquetHostMemoryEmptyMetaData(metaForEmpty.partitionedFile, // just pick one since not used
           combinedEmptyMeta.emptyBufferSize,
           combinedEmptyMeta.emptyTotalBytesRead,
           metaForEmpty.dateRebaseMode, // these shouldn't matter since data is empty
@@ -2786,33 +2811,74 @@ class MultiFileCloudParquetPartitionReader(
     }
   }
 
-  private case class HostMemoryEmptyMetaData(
-      override val partitionedFile: PartitionedFile,
+  protected def newHMEmptyMetadataForSingleFile(
+      partitionedFile: PartitionedFile,
       bufferSize: Long,
-      override val bytesRead: Long,
+      bytesRead: Long,
       dateRebaseMode: DateTimeRebaseMode,
       timestampRebaseMode: DateTimeRebaseMode,
       hasInt96Timestamps: Boolean,
       clippedSchema: MessageType,
       readSchema: StructType,
-      numRows: Long,
-      override val allPartValues: Option[Array[(Long, InternalRow)]] = None)
-    extends HostMemoryBuffersWithMetaDataBase {
-    override def memBuffersAndSizes: Array[SingleHMBAndMeta] =
-      Array(SingleHMBAndMeta.empty(numRows))
+      numRows: Long
+  ): HostMemoryEmptyMetaData = {
+    ParquetHostMemoryEmptyMetaData(partitionedFile, bufferSize, bytesRead,
+      dateRebaseMode, timestampRebaseMode, hasInt96Timestamps,
+      clippedSchema, readSchema, numRows)
   }
 
-  case class HostMemoryBuffersWithMetaData(
+  protected case class ParquetHostMemoryEmptyMetaData(
+      override val partitionedFile: PartitionedFile,
+      override val bufferSize: Long,
+      override val bytesRead: Long,
+      override val dateRebaseMode: DateTimeRebaseMode,
+      override val timestampRebaseMode: DateTimeRebaseMode,
+      override val hasInt96Timestamps: Boolean,
+      override val clippedSchema: MessageType,
+      override val readSchema: StructType,
+      override val numRows: Long,
+      override val allPartValues: Option[Array[(Long, InternalRow)]] = None)
+    extends HostMemoryEmptyMetaData {}
+
+  protected def newHMBWithMetaDataForSingleFile(
+      partitionedFile: PartitionedFile,
+      memBuffersAndSizes: Array[SingleHMBAndMeta],
+      bytesRead: Long,
+      fileBlockMeta: ParquetFileInfoWithBlockMeta
+  ): HostMemoryBuffersWithMetaData = {
+    ParquetHostMemoryBuffersWithMetaData(partitionedFile, memBuffersAndSizes,
+      bytesRead, fileBlockMeta.dateRebaseMode,
+      fileBlockMeta.timestampRebaseMode, fileBlockMeta.hasInt96Timestamps,
+      fileBlockMeta.schema, fileBlockMeta.readSchema, None)
+  }
+
+  case class ParquetHostMemoryBuffersWithMetaData(
       override val partitionedFile: PartitionedFile,
       override val memBuffersAndSizes: Array[SingleHMBAndMeta],
       override val bytesRead: Long,
-      dateRebaseMode: DateTimeRebaseMode,
-      timestampRebaseMode: DateTimeRebaseMode,
-      hasInt96Timestamps: Boolean,
-      clippedSchema: MessageType,
-      readSchema: StructType,
+      override val dateRebaseMode: DateTimeRebaseMode,
+      override val timestampRebaseMode: DateTimeRebaseMode,
+      override val hasInt96Timestamps: Boolean,
+      override val clippedSchema: MessageType,
+      override val readSchema: StructType,
       override val allPartValues: Option[Array[(Long, InternalRow)]]
-  ) extends HostMemoryBuffersWithMetaDataBase
+  ) extends HostMemoryBuffersWithMetaData {
+    override def withMemBuffersAndSizes(
+        memBuffersAndSizes: Array[SingleHMBAndMeta]): HostMemoryBuffersWithMetaData = {
+      this.copy(memBuffersAndSizes = memBuffersAndSizes)
+    }
+
+    override def consumeHeadBuffer(): HostMemoryBuffersWithMetaData = {
+      require(memBuffersAndSizes.nonEmpty,
+        "consumeHeadBuffer called on HostMemoryBuffersWithMetaData with no buffers")
+      val remainingBuffers = if (memBuffersAndSizes.length > 1) {
+        memBuffersAndSizes.drop(1)
+      } else {
+        Array.empty[SingleHMBAndMeta]
+      }
+      this.copy(memBuffersAndSizes = remainingBuffers)
+    }
+  }
 
   private class ReadBatchRunner(
       file: PartitionedFile,
@@ -2859,7 +2925,7 @@ class MultiFileCloudParquetPartitionReader(
       } catch {
         case e: FileNotFoundException if ignoreMissingFiles =>
           logWarning(s"Skipped missing file: ${file.filePath}", e)
-          HostMemoryEmptyMetaData(file, 0, 0,
+          newHMEmptyMetadataForSingleFile(file, 0, 0,
             DateTimeRebaseLegacy, DateTimeRebaseLegacy,
             hasInt96Timestamps = false, null, null, 0)
         // Throw FileNotFoundException even if `ignoreCorruptFiles` is true
@@ -2867,7 +2933,7 @@ class MultiFileCloudParquetPartitionReader(
         case e @ (_: RuntimeException | _: IOException) if ignoreCorruptFiles =>
           logWarning(
             s"Skipped the rest of the content in the corrupted file: ${file.filePath}", e)
-          HostMemoryEmptyMetaData(file, 0, 0,
+          newHMEmptyMetadataForSingleFile(file, 0, 0,
             DateTimeRebaseLegacy, DateTimeRebaseLegacy,
             hasInt96Timestamps = false, null, null, 0)
       } finally {
@@ -2889,7 +2955,7 @@ class MultiFileCloudParquetPartitionReader(
         if (fileBlockMeta.blocks.isEmpty) {
           val bytesRead = fileSystemBytesRead() - startingBytesRead
           // no blocks so return null buffer and size 0
-          HostMemoryEmptyMetaData(file, 0, bytesRead,
+          newHMEmptyMetadataForSingleFile(file, 0, bytesRead,
             fileBlockMeta.dateRebaseMode, fileBlockMeta.timestampRebaseMode,
             fileBlockMeta.hasInt96Timestamps, fileBlockMeta.schema, fileBlockMeta.readSchema, 0)
         } else {
@@ -2897,14 +2963,14 @@ class MultiFileCloudParquetPartitionReader(
           if (isDone) {
             val bytesRead = fileSystemBytesRead() - startingBytesRead
             // got close before finishing
-            HostMemoryEmptyMetaData(file, 0, bytesRead,
+            newHMEmptyMetadataForSingleFile(file, 0, bytesRead,
               fileBlockMeta.dateRebaseMode, fileBlockMeta.timestampRebaseMode,
               fileBlockMeta.hasInt96Timestamps, fileBlockMeta.schema, fileBlockMeta.readSchema, 0)
           } else {
             if (fileBlockMeta.schema.getFieldCount == 0) {
               val bytesRead = fileSystemBytesRead() - startingBytesRead
               val numRows = fileBlockMeta.blocks.map(_.getRowCount).sum.toInt
-              HostMemoryEmptyMetaData(file, 0, bytesRead,
+              newHMEmptyMetadataForSingleFile(file, 0, bytesRead,
                 fileBlockMeta.dateRebaseMode, fileBlockMeta.timestampRebaseMode,
                 fileBlockMeta.hasInt96Timestamps, fileBlockMeta.schema, fileBlockMeta.readSchema,
                 numRows)
@@ -2923,15 +2989,13 @@ class MultiFileCloudParquetPartitionReader(
               if (isDone) {
                 // got close before finishing
                 hostBuffers.safeClose()
-                HostMemoryEmptyMetaData(file, 0, bytesRead,
+                newHMEmptyMetadataForSingleFile(file, 0, bytesRead,
                   fileBlockMeta.dateRebaseMode, fileBlockMeta.timestampRebaseMode,
                   fileBlockMeta.hasInt96Timestamps, fileBlockMeta.schema,
                   fileBlockMeta.readSchema, 0)
               } else {
-                HostMemoryBuffersWithMetaData(file, hostBuffers.toArray,
-                  bytesRead, fileBlockMeta.dateRebaseMode,
-                  fileBlockMeta.timestampRebaseMode, fileBlockMeta.hasInt96Timestamps,
-                  fileBlockMeta.schema, fileBlockMeta.readSchema, None)
+                newHMBWithMetaDataForSingleFile(file, hostBuffers.toArray,
+                  bytesRead, fileBlockMeta)
               }
             }
           }
@@ -3008,12 +3072,9 @@ class MultiFileCloudParquetPartitionReader(
 
     case buffer: HostMemoryBuffersWithMetaData =>
       val memBuffersAndSize = buffer.memBuffersAndSizes
-      val hmbAndInfo = memBuffersAndSize.head
+//      val hmbAndInfo = memBuffersAndSize.head
       val batchIter = try {
-        readBufferToBatches(buffer.dateRebaseMode,
-          buffer.timestampRebaseMode, buffer.hasInt96Timestamps, buffer.clippedSchema,
-          buffer.readSchema, buffer.partitionedFile, hmbAndInfo.hmbs, buffer.allPartValues,
-          hmbAndInfo.blockMeta)
+        readBufferToBatches(buffer)
       } finally {
         // If there are more buffers, we will release the resource after reading all batches,
         // in case of releasing the resource too early.
@@ -3023,8 +3084,9 @@ class MultiFileCloudParquetPartitionReader(
         }
       }
       if (memBuffersAndSize.length > 1) {
-        val updatedBuffers = memBuffersAndSize.drop(1)
-        currentFileHostBuffers = Some(buffer.copy(memBuffersAndSizes = updatedBuffers))
+//        val updatedBuffers = memBuffersAndSize.drop(1)
+//        currentFileHostBuffers = Some(buffer.withMemBuffersAndSizes(updatedBuffers))
+        currentFileHostBuffers = Some(buffer.consumeHeadBuffer())
         buffer.combineReleaseCallbacks(currentFileHostBuffers.get)
       } else {
         currentFileHostBuffers = None
@@ -3033,16 +3095,19 @@ class MultiFileCloudParquetPartitionReader(
     case _ => throw new RuntimeException("Wrong HostMemoryBuffersWithMetaData")
   }
 
-  protected def readBufferToBatches(
-      dateRebaseMode: DateTimeRebaseMode,
-      timestampRebaseMode: DateTimeRebaseMode,
-      hasInt96Timestamps: Boolean,
-      clippedSchema: MessageType,
-      readDataSchema: StructType,
-      partedFile: PartitionedFile,
-      hostBuffers: Array[SpillableHostBuffer],
-      allPartValues: Option[Array[(Long, InternalRow)]],
-      blockMetadata: Seq[DataBlockBase]): Iterator[ColumnarBatch] = {
+  protected def readBufferToBatches(buffer: HostMemoryBuffersWithMetaData)
+  : Iterator[ColumnarBatch] = {
+    val memBuffersAndSize = buffer.memBuffersAndSizes
+    val hmbAndInfo = memBuffersAndSize.head
+
+    val dateRebaseMode: DateTimeRebaseMode = buffer.dateRebaseMode
+    val timestampRebaseMode: DateTimeRebaseMode = buffer.timestampRebaseMode
+    val hasInt96Timestamps: Boolean = buffer.hasInt96Timestamps
+    val clippedSchema: MessageType = buffer.clippedSchema
+    val readDataSchema: StructType = buffer.readSchema
+    val partedFile: PartitionedFile = buffer.partitionedFile
+    val hostBuffers = hmbAndInfo.hmbs
+    val allPartValues: Option[Array[(Long, InternalRow)]] = buffer.allPartValues
 
     val parseOpts = closeOnExcept(hostBuffers) { _ =>
       getParquetOptions(readDataSchema, clippedSchema, useFieldId)
@@ -3159,10 +3224,16 @@ object MakeParquetTableProducer extends Logging {
                   rowGroupOffsets.orNull, rowGroupNumRows.orNull,
                   buffers:_*)
               } else if (deletionVectors.isDefined && deletionVectors.get.length > 1) {
-                // Multiple deletion vectors - need to get options handle first
-                // For now, fall back to single file approach until we properly support coalescing
-                throw new UnsupportedOperationException(
-                  "Multiple deletion vectors in non-chunked mode not yet supported")
+                logError("Number of deletion vectors: " + deletionVectors.get.length +
+                  ", number of row counts: " + deletionVectorRowCounts.get.length +
+                ", number of row group offsets: " +
+                  rowGroupOffsets.map(_.length).getOrElse(0) +
+                ", number of row group num rows: " +
+                  rowGroupNumRows.map(_.length).getOrElse(0))
+                DeltaLake.readDeltaParquet(
+                  opts, deletionVectors.get, deletionVectorRowCounts.get,
+                  rowGroupOffsets.orNull, rowGroupNumRows.orNull,
+                  buffers:_*)
               } else {
                 // No deletion vectors - use standard API
                 Table.readParquet(opts, buffers:_*)
@@ -3302,14 +3373,15 @@ case class DeletionVectorTableReader(
     new DeltaLake.ParquetChunkedReader(chunkSizeByteLimit,
       maxChunkedReaderMemoryUsageSizeBytes, opts,
       deletionVectors,
+      deletionVectorRowCounts,
       rowGroupOffsets, rowGroupNumRows, buffers:_*)
   } else {
     // Multiple deletion vectors for coalescing
-//    new com.nvidia.spark.rapids.jni.DeletionVector.ChunkedReader(chunkSizeByteLimit,
-//      maxChunkedReaderMemoryUsageSizeBytes, optionsHandle, deletionVectors,
-//      deletionVectorRowCounts, rowGroupOffsets, rowGroupNumRows)
-    throw new UnsupportedOperationException(
-      "Multiple deletion vectors in chunked mode not yet supported")
+    new DeltaLake.ParquetChunkedReader(chunkSizeByteLimit,
+      maxChunkedReaderMemoryUsageSizeBytes, opts,
+      deletionVectors,
+      deletionVectorRowCounts,
+      rowGroupOffsets, rowGroupNumRows, buffers:_*)
   }
 
   private[this] lazy val splitsString = splits.mkString("; ")

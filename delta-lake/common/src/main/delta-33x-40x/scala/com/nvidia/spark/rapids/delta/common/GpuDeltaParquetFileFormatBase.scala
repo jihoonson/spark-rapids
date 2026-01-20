@@ -24,9 +24,11 @@ import com.nvidia.spark.rapids.jni.fileio.RapidsFileIO
 import com.nvidia.spark.rapids.parquet._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+import org.apache.parquet.bytes.BytesUtils
 import org.apache.parquet.hadoop.metadata.BlockMetaData
 import org.apache.parquet.schema.MessageType
 import scala.collection.mutable.ArrayBuffer
+import scala.collection.JavaConverters._
 
 import com.nvidia.spark.rapids.GpuMetric._
 import org.apache.spark.TaskContext
@@ -54,6 +56,7 @@ import org.apache.spark.util.SerializableConfiguration
 
 //import java.nio.{ByteBuffer, ByteOrder}
 import java.io.ByteArrayInputStream
+import java.nio.charset.StandardCharsets
 //import java.util.UUID
 //import java.io.FileOutputStream
 
@@ -232,8 +235,12 @@ class GpuDeltaParquetFileFormatBase(
               dataBuffer.close()
               CachedGpuBatchIterator(EmptyTableReader, colTypes)
             } else {
+              val dvDescriptorOpt = split.otherConstantMetadataColumnValues
+                .get(FILE_ROW_INDEX_FILTER_ID_ENCODED).asInstanceOf[Option[String]]
+              val filterTypeOpt = split.otherConstantMetadataColumnValues
+                .get(FILE_ROW_INDEX_FILTER_TYPE).asInstanceOf[Option[RowIndexFilterType]]
               val maybeSerializedDV = tablePath.map(tp =>
-                Array(RapidsDeletionVectorUtils.readDeletionVector(conf, split, tp)))
+                Array(RapidsDeletionVectorUtils.readDeletionVector(conf, dvDescriptorOpt, filterTypeOpt, tp)))
               val (dvRowCounts, rowGroupOffsets, rowGroupNumRows) =
                 RapidsDeletionVectorUtils.getRowGroupMetadata(currentChunkedBlocks)
 
@@ -688,32 +695,309 @@ class DeltaMultiFileCloudNativeParquetPartitionReader(
 
   logError("DeltaMultiFileCloudNativeParquetPartitionReader is used")
 
-  override protected def readBufferToBatches(
+  case class DeltaParquetHostMemoryEmptyMetaData(
+      override val partitionedFile: PartitionedFile,
+      override val bufferSize: Long,
+      override val bytesRead: Long,
+      override val dateRebaseMode: DateTimeRebaseMode,
+      override val timestampRebaseMode: DateTimeRebaseMode,
+      override val hasInt96Timestamps: Boolean,
+      override val clippedSchema: MessageType,
+      override val readSchema: StructType,
+      override val numRows: Long,
+      dvDescriptorOpts: Array[Array[Option[String]]], // must be aligned with filterTypeOpts
+      filterTypeOpts: Array[Array[Option[RowIndexFilterType]]], // must be aligned with dvDescriptorOpts,
+      totalRowsToScan: Array[Array[Int]], // total number of rows to scan before applying DVs
+      rowGroupOffsets: Array[Array[Long]], // row group offsets for each buffer
+      rowGroupNumRows: Array[Array[Int]], // number of rows in each row group for each buffer
+      override val allPartValues: Option[Array[(Long, InternalRow)]] = None)
+    extends HostMemoryEmptyMetaData {}
+
+  case class DeltaParquetHostMemoryBuffersWithMetaData(
+      override val partitionedFile: PartitionedFile,
+      override val memBuffersAndSizes: Array[SingleHMBAndMeta],
+      override val bytesRead: Long,
+      override val dateRebaseMode: DateTimeRebaseMode,
+      override val timestampRebaseMode: DateTimeRebaseMode,
+      override val hasInt96Timestamps: Boolean,
+      override val clippedSchema: MessageType,
+      override val readSchema: StructType,
+      override val allPartValues: Option[Array[(Long, InternalRow)]],
+      dvDescriptorOpts: Array[Array[Option[String]]], // must be aligned with memBuffersAndSizes
+      filterTypeOpts: Array[Array[Option[RowIndexFilterType]]], // must be aligned with memBuffersAndSizes
+      totalRowsToScan: Array[Array[Int]], // total number of rows to scan before applying DVs
+      rowGroupOffsets: Array[Array[Long]], // row group offsets for each buffer
+      rowGroupNumRows: Array[Array[Int]] // number of rows in each row group for each buffer
+  ) extends HostMemoryBuffersWithMetaData {
+    override def withMemBuffersAndSizes(
+        memBuffersAndSizes: Array[SingleHMBAndMeta]): HostMemoryBuffersWithMetaData = {
+      this.copy(memBuffersAndSizes = memBuffersAndSizes)
+    }
+
+    override def consumeHeadBuffer(): HostMemoryBuffersWithMetaData = {
+      require(memBuffersAndSizes.nonEmpty,
+        "consumeHeadBuffer called on HostMemoryBuffersWithMetaData with no buffers")
+      val remainingBuffers = if (memBuffersAndSizes.length > 1) {
+        memBuffersAndSizes.drop(1)
+      } else {
+        Array.empty[SingleHMBAndMeta]
+      }
+      val dvDescs = dvDescriptorOpts.drop(1)
+      val filterTypes = filterTypeOpts.drop(1)
+      val newTotalRowsToScan = totalRowsToScan.drop(1)
+      val newRowGroupOffsets = rowGroupOffsets.drop(1)
+      val newRowGroupNumRows = rowGroupNumRows.drop(1)
+      this.copy(memBuffersAndSizes = remainingBuffers,
+        dvDescriptorOpts = dvDescs,
+        filterTypeOpts = filterTypes,
+        totalRowsToScan = newTotalRowsToScan,
+        rowGroupOffsets = newRowGroupOffsets,
+        rowGroupNumRows = newRowGroupNumRows)
+    }
+  }
+
+  override protected def newHMEmptyMetadataForSingleFile(
+      partitionedFile: PartitionedFile,
+      bufferSize: Long,
+      bytesRead: Long,
       dateRebaseMode: DateTimeRebaseMode,
       timestampRebaseMode: DateTimeRebaseMode,
       hasInt96Timestamps: Boolean,
       clippedSchema: MessageType,
-      readDataSchema: StructType,
-      partedFile: PartitionedFile,
-      hostBuffers: Array[SpillableHostBuffer],
-      allPartValues: Option[Array[(Long, InternalRow)]],
-      blockMetadata: Seq[DataBlockBase]): Iterator[ColumnarBatch] = {
+      readSchema: StructType,
+      numRows: Long
+  ): HostMemoryEmptyMetaData = {
+//    val dvDescriptorOpt = partitionedFile.otherConstantMetadataColumnValues
+//      .get(FILE_ROW_INDEX_FILTER_ID_ENCODED).asInstanceOf[Option[String]]
+//    val filterTypeOpt = partitionedFile.otherConstantMetadataColumnValues
+//      .get(FILE_ROW_INDEX_FILTER_TYPE).asInstanceOf[Option[RowIndexFilterType]]
+//    val hmbAndInfo = memBuffersAndSize.head
+//    val dataBlock = hmbAndInfo.blockMeta.map(_.asInstanceOf[ParquetDataBlock].dataBlock)
+//    val (dvRowCounts, rowGroupOffsets, rowGroupNumRows) = RapidsDeletionVectorUtils
+//      .getRowGroupMetadata(blockMetadata.map(_.asInstanceOf[ParquetDataBlock].dataBlock))
+//
+//    DeltaParquetHostMemoryEmptyMetaData(
+//      partitionedFile,
+//      bufferSize,
+//      bytesRead,
+//      dateRebaseMode,
+//      timestampRebaseMode,
+//      hasInt96Timestamps,
+//      clippedSchema,
+//      readSchema,
+//      numRows,
+//      Array(Array(dvDescriptorOpt)),
+//      Array(Array(filterTypeOpt)),
+//      Array(dvRowCounts),
+//      Array(rowGroupOffsets),
+//      Array(rowGroupNumRows)
+//    )
+    throw new UnsupportedOperationException(
+      "DeltaMultiFileCloudNativeParquetPartitionReader does not support empty metadata")
+  }
+
+  override protected def newHMBWithMetaDataForSingleFile(
+      partitionedFile: PartitionedFile,
+      memBuffersAndSize: Array[SingleHMBAndMeta],
+      bytesRead: Long,
+      fileBlockMeta: ParquetFileInfoWithBlockMeta
+  ): HostMemoryBuffersWithMetaData = {
+    require(memBuffersAndSize.length == 1)
+    val dvDescriptorOpt = partitionedFile.otherConstantMetadataColumnValues
+      .get(FILE_ROW_INDEX_FILTER_ID_ENCODED).asInstanceOf[Option[String]]
+    val filterTypeOpt = partitionedFile.otherConstantMetadataColumnValues
+      .get(FILE_ROW_INDEX_FILTER_TYPE).asInstanceOf[Option[RowIndexFilterType]]
+    val hmbAndInfo = memBuffersAndSize.head
+    val dataBlock = hmbAndInfo.blockMeta.map(_.asInstanceOf[ParquetDataBlock].dataBlock)
+    val (dvRowCounts, rowGroupOffsets, rowGroupNumRows) = RapidsDeletionVectorUtils
+      .getRowGroupMetadata(dataBlock)
+
+    DeltaParquetHostMemoryBuffersWithMetaData(
+      partitionedFile,
+      memBuffersAndSize,
+      bytesRead,
+      fileBlockMeta.dateRebaseMode,
+      fileBlockMeta.timestampRebaseMode,
+      fileBlockMeta.hasInt96Timestamps,
+      fileBlockMeta.schema,
+      fileBlockMeta.readSchema,
+      None,
+      Array(Array(dvDescriptorOpt)),
+      Array(Array(filterTypeOpt)),
+      Array(Array(dvRowCounts)),
+      Array(rowGroupOffsets),
+      Array(rowGroupNumRows)
+    )
+  }
+
+  override protected def doCombineHMBs(combinedMeta: CombinedMeta)
+  : HostMemoryBuffersWithMetaDataBase = {
+    val toCombineHmbs = combinedMeta.toCombine.filterNot(_.isInstanceOf[HostMemoryEmptyMetaData])
+    val metaToUse = combinedMeta.firstNonEmpty
+    logDebug(s"Using Combine mode and actually combining, num files ${toCombineHmbs.size} " +
+      s"files: ${toCombineHmbs.map(_.partitionedFile.filePath).mkString(",")}")
+    val startCombineTime = System.currentTimeMillis()
+    val combinedDvDescs = combinedMeta.toCombine.map {
+      case d: DeltaParquetHostMemoryBuffersWithMetaData =>
+        d.dvDescriptorOpts
+      case d: DeltaParquetHostMemoryEmptyMetaData =>
+        d.dvDescriptorOpts
+      case _ => throw new IllegalStateException(
+        "Unexpected HostMemoryBuffersWithMetaData type in DeltaMultiFileCloudNativeParquetPartitionReader")
+    }.flatten.flatten
+    logError("combinedDvDescs length: " + combinedDvDescs.length)
+    val filterTypes = combinedMeta.toCombine.map {
+      case d: DeltaParquetHostMemoryBuffersWithMetaData =>
+        d.filterTypeOpts
+      case d: DeltaParquetHostMemoryEmptyMetaData =>
+        d.filterTypeOpts
+      case _ => throw new IllegalStateException(
+        "Unexpected HostMemoryBuffersWithMetaData type in DeltaMultiFileCloudNativeParquetPartitionReader")
+    }.flatten.flatten
+    val totalRowsToScan: Array[Int] = combinedMeta.toCombine.flatMap {
+      case d: DeltaParquetHostMemoryBuffersWithMetaData =>
+        d.totalRowsToScan
+      case d: DeltaParquetHostMemoryEmptyMetaData =>
+        d.totalRowsToScan
+      case _ => throw new IllegalStateException(
+        "Unexpected HostMemoryBuffersWithMetaData type in DeltaMultiFileCloudNativeParquetPartitionReader")
+    }.flatten
+    val rowGroupOffsets: Array[Long] = combinedMeta.toCombine.flatMap {
+      case d: DeltaParquetHostMemoryBuffersWithMetaData =>
+        d.rowGroupOffsets
+      case d: DeltaParquetHostMemoryEmptyMetaData =>
+        d.rowGroupOffsets
+      case _ => throw new IllegalStateException(
+        "Unexpected HostMemoryBuffersWithMetaData type in DeltaMultiFileCloudNativeParquetPartitionReader")
+    }.flatten
+    val rowGroupNumRows: Array[Int] = combinedMeta.toCombine.flatMap {
+      case d: DeltaParquetHostMemoryBuffersWithMetaData =>
+        d.rowGroupNumRows
+      case d: DeltaParquetHostMemoryEmptyMetaData =>
+        d.rowGroupNumRows
+      case _ => throw new IllegalStateException(
+        "Unexpected HostMemoryBuffersWithMetaData type in DeltaMultiFileCloudNativeParquetPartitionReader")
+    }.flatten
+
+    // since we know not all of them are empty and we know all these have the same schema since
+    // we already separated, just use the clippedSchema from metadata
+    val schemaToUse = metaToUse.clippedSchema
+    val combined = closeOnExcept(new ArrayBuffer[HostMemoryBuffer]) { buffers =>
+      var offset: Long = RapidsDeletionVectorUtils.PARQUET_MAGIC.size
+      val allOutputBlocks = new ArrayBuffer[BlockMetaData]()
+
+      // zero-copy the data
+      toCombineHmbs.map { hbWithMeta =>
+        hbWithMeta.memBuffersAndSizes.map { hmbInfo =>
+          val columnDataSize = hmbInfo.blockMeta.map { meta =>
+            meta.getColumns.asScala.map(_.getTotalSize).sum
+          }.sum
+          if (columnDataSize > 0 && hmbInfo.hmbs.nonEmpty) {
+            val bytesToSlice = if (buffers.isEmpty) {
+              columnDataSize + RapidsDeletionVectorUtils.PARQUET_MAGIC.size
+            } else {
+              columnDataSize
+            }
+            val sliceOffset = if (buffers.isEmpty) 0 else RapidsDeletionVectorUtils.PARQUET_MAGIC.size
+            require(hmbInfo.hmbs.length == 1)
+            buffers += SpillableHostBuffer.sliceWithRetry(hmbInfo.hmbs.head, sliceOffset,
+              bytesToSlice)
+          }
+          val outputBlocks = computeBlockMetaData(hmbInfo.blockMeta, offset)
+          allOutputBlocks ++= outputBlocks
+          offset += columnDataSize
+          hmbInfo.close()
+        }
+      }
+      if (buffers.isEmpty) {
+        closeOnExcept(HostMemoryBuffer.allocate(RapidsDeletionVectorUtils.PARQUET_MAGIC.size)) { hmb =>
+          hmb.setBytes(0, RapidsDeletionVectorUtils.PARQUET_MAGIC, 0, RapidsDeletionVectorUtils.PARQUET_MAGIC.size);
+          buffers += hmb
+        }
+      }
+      // using all of the actual combined output blocks meta calculate what the footer size
+      // will really be
+      val actualFooterSize = calculateParquetFooterSize(allOutputBlocks.toSeq, schemaToUse)
+      val footerBuf = HostMemoryBuffer.allocate(actualFooterSize + 8)
+      buffers += footerBuf
+      withResource(new HostMemoryOutputStream(footerBuf)) { footerOut =>
+        writeFooter(footerOut, allOutputBlocks.toSeq, schemaToUse)
+        BytesUtils.writeIntLittleEndian(footerOut, footerOut.getPos.toInt)
+        footerOut.write(RapidsDeletionVectorUtils.PARQUET_MAGIC)
+        offset += footerOut.getPos
+      }
+      val spHostBufs = buffers.map(b =>
+        SpillableHostBuffer(b, b.getLength, SpillPriorities.ACTIVE_BATCHING_PRIORITY))
+      val newHmbBufferInfo = SingleHMBAndMeta(spHostBufs.toArray, offset,
+        combinedMeta.allPartValues.map(_._1).sum, Seq.empty)
+      val newHmbMeta = DeltaParquetHostMemoryBuffersWithMetaData(
+        metaToUse.partitionedFile,
+        Array(newHmbBufferInfo),
+        offset,
+        metaToUse.dateRebaseMode,
+        metaToUse.timestampRebaseMode,
+        metaToUse.hasInt96Timestamps,
+        metaToUse.clippedSchema,
+        metaToUse.readSchema,
+        Some(combinedMeta.allPartValues),
+        Array(combinedDvDescs),
+        Array(filterTypes),
+        Array(totalRowsToScan),
+        Array(rowGroupOffsets),
+        Array(rowGroupNumRows)
+      )
+      // Combine the metrics from all the parts
+      val filterTime = combinedMeta.toCombine.map(_.getFilterTime).sum
+      val bufferTime = combinedMeta.toCombine.map(_.getBufferTime).sum
+      newHmbMeta.setExecutionTime(filterTime, bufferTime)
+      val scheduleTime = combinedMeta.toCombine.map(_.getScheduleTime).sum
+      newHmbMeta.setScheduleTime(scheduleTime)
+      // Combine the release callbacks from all the parts
+      combinedMeta.toCombine.foreach { hmb =>
+        hmb.combineReleaseCallbacks(newHmbMeta)
+      }
+      newHmbMeta
+    }
+    logDebug(s"Took ${(System.currentTimeMillis() - startCombineTime)} " +
+      s"ms to do combine of ${toCombineHmbs.size} files, " +
+      s"task id: ${TaskContext.get().taskAttemptId()}")
+    combined
+  }
+
+  override protected def readBufferToBatches(
+      buffer: HostMemoryBuffersWithMetaData): Iterator[ColumnarBatch] = {
+    val deltaBuffer = buffer.asInstanceOf[DeltaParquetHostMemoryBuffersWithMetaData]
+    val memBuffersAndSize = buffer.memBuffersAndSizes
+    val hmbAndInfo = memBuffersAndSize.head
+
+    val dateRebaseMode: DateTimeRebaseMode = buffer.dateRebaseMode
+    val timestampRebaseMode: DateTimeRebaseMode = buffer.timestampRebaseMode
+    val hasInt96Timestamps: Boolean = buffer.hasInt96Timestamps
+    val clippedSchema: MessageType = buffer.clippedSchema
+    val readDataSchema: StructType = buffer.readSchema
+    val partedFile: PartitionedFile = buffer.partitionedFile
+    val hostBuffers = hmbAndInfo.hmbs
+    val allPartValues: Option[Array[(Long, InternalRow)]] = buffer.allPartValues
+    val dvDescOpts = deltaBuffer.dvDescriptorOpts.head
+    val filterTypeOpts = deltaBuffer.filterTypeOpts.head
+//    val blockMetadata = hmbAndInfo.blockMeta
+
+    logError("dvDescOpts in readBufferToBatches: " + dvDescOpts.mkString(","))
 
     val parseOpts = closeOnExcept(hostBuffers) { _ =>
       getParquetOptions(readDataSchema, clippedSchema, useFieldId)
     }
     val colTypes = readDataSchema.fields.map(f => f.dataType)
 
-    def log(s: String): Unit = {
-      logError(s)
-    }
-
     val maybeSerializedDV = tablePath.map(tp =>
-      Array(RapidsDeletionVectorUtils.readDeletionVector(conf, partedFile, tp, Some(log))))
+      dvDescOpts.zip(filterTypeOpts).map {
+        case (desc, filterType) =>
+          RapidsDeletionVectorUtils.readDeletionVector(conf, desc, filterType, tp)
+      })
 
-    val (dvRowCounts, rowGroupOffsets, rowGroupNumRows) =
-      RapidsDeletionVectorUtils.getRowGroupMetadata(
-        blockMetadata.map(_.asInstanceOf[ParquetDataBlock].dataBlock))
+//    val (dvRowCounts, rowGroupOffsets, rowGroupNumRows) =
+//      RapidsDeletionVectorUtils.getRowGroupMetadata(
+//        blockMetadata.map(_.asInstanceOf[ParquetDataBlock].dataBlock))
 
     withResource(hostBuffers) { _ =>
       RmmRapidsRetryIterator.withRetryNoSplit {
@@ -732,9 +1016,9 @@ class DeltaMultiFileCloudNativeParquetPartitionReader(
           isSchemaCaseSensitive, useFieldId, readDataSchema, clippedSchema, files,
           debugDumpPrefix, debugDumpAlways,
           maybeSerializedDV,
-          deletionVectorRowCounts = Some(Array(dvRowCounts)),
-          rowGroupOffsets = Some(rowGroupOffsets),
-          rowGroupNumRows = Some(rowGroupNumRows))
+          deletionVectorRowCounts = Some(deltaBuffer.totalRowsToScan.head),
+          rowGroupOffsets = Some(deltaBuffer.rowGroupOffsets.head),
+          rowGroupNumRows = Some(deltaBuffer.rowGroupNumRows.head))
 
         val batchIter = CachedGpuBatchIterator(tableReader, colTypes)
 
@@ -760,6 +1044,8 @@ class DeltaMultiFileCloudNativeParquetPartitionReader(
 
 object RapidsDeletionVectorUtils {
 
+  val PARQUET_MAGIC = "PAR1".getBytes(StandardCharsets.US_ASCII)
+
   lazy val SERIALIZED_EMPTY_BITMAP: HostMemoryBuffer = {
     val buffer = HostMemoryBuffer.allocate(8)
     buffer.setLong(0, 0L)
@@ -769,14 +1055,11 @@ object RapidsDeletionVectorUtils {
   val MAGIC_NUMBER_BYTE_SIZE = 4
 
   def readDeletionVector(conf: Configuration,
-      partitionedFile: PartitionedFile,
+      dvDescriptorOpt: Option[String],
+      filterTypeOpt: Option[RowIndexFilterType],
       tablePath: String,
       logger: Option[String => Unit] = None): HostMemoryBuffer = {
     // Fetch the DV descriptor from the partitioned file
-    val dvDescriptorOpt = partitionedFile.otherConstantMetadataColumnValues
-      .get(FILE_ROW_INDEX_FILTER_ID_ENCODED)
-    val filterTypeOpt = partitionedFile.otherConstantMetadataColumnValues
-      .get(FILE_ROW_INDEX_FILTER_TYPE)
     if (dvDescriptorOpt.isDefined && filterTypeOpt.isDefined) {
       val dvDesc = DeletionVectorDescriptor.deserializeFromBase64(
         dvDescriptorOpt.get.asInstanceOf[String])
