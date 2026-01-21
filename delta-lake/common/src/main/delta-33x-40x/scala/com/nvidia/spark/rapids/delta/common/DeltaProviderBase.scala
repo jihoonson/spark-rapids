@@ -137,14 +137,7 @@ abstract class DeltaProviderBase extends DeltaIOProvider {
   }
 
   override def pushFilterDownToScan(plan: SparkPlan): SparkPlan = {
-    plan.transformUp {
-      case _ @ GpuFilterExec(condition, child)
-        if condition.references.exists(_.name == IS_ROW_DELETED_COLUMN_NAME) =>
-        // TODO: decompose the condition and perform the exact match whether the condition
-        // is the DV predicate or not
-      child
-//        dvFilterInput.copy(projectList = inputList.filter(_.name == IS_ROW_DELETED_COLUMN_NAME))
-    }
+    DeltaPredicatePushdown.pushPredicateDownToScan(plan)
   }
 
   // TODO: fix this if "is_row_deleted" is pushed down to scan
@@ -199,6 +192,33 @@ abstract class DeltaProviderBase extends DeltaIOProvider {
     }.getOrElse(false)
   }
 
+}
+
+object DeltaPredicatePushdown extends ShimPredicateHelper {
+  def pushPredicateDownToScan(plan: SparkPlan): SparkPlan = {
+    plan.transformUp {
+      case filter @ GpuFilterExec(condition, child)
+        if condition.references.exists(_.name == IS_ROW_DELETED_COLUMN_NAME) =>
+        // TODO: decompose the condition and perform the exact match whether the condition
+        // is the DV predicate or not
+
+        // Decompose the condition into CNF
+        val conjuncts = splitConjunctivePredicates(condition)
+        // the dv condition should have one of its references as IS_ROW_DELETED_COLUMN_NAME
+        // and the other reference should be a literal of 0.
+        val (_, otherPredicates) = conjuncts.partition(p =>
+          p.references.size == 1
+            && p.references.exists(_.name == IS_ROW_DELETED_COLUMN_NAME)
+          // TODO: verify that the other reference is a literal 0
+        )
+
+        if (otherPredicates.isEmpty) {
+          child
+        } else {
+          filter.copy(condition = otherPredicates.reduce(GpuAnd))(filter.coalesceAfter)
+        }
+    }
+  }
 }
 
 class DeltaCreatableRelationProviderMeta(
