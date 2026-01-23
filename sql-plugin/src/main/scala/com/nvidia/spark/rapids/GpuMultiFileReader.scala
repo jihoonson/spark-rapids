@@ -346,12 +346,12 @@ abstract class MultiFilePartitionReaderFactoryBase(
     val conf = broadcastedConf.value.value
 
     if (useMultiThread(filePaths)) {
-      logInfo("Using the multi-threaded multi-file " + getFileFormatShortName + " reader, " +
-        s"files: ${filePaths.mkString(",")} task attemptid: ${TaskContext.get.taskAttemptId()}")
+//      logInfo("Using the multi-threaded multi-file " + getFileFormatShortName + " reader, " +
+//        s"files: ${filePaths.mkString(",")} task attemptid: ${TaskContext.get.taskAttemptId()}")
       buildBaseColumnarReaderForCloud(files, conf)
     } else {
-      logInfo("Using the coalesce multi-file " + getFileFormatShortName + " reader, files: " +
-        s"${filePaths.mkString(",")} task attemptid: ${TaskContext.get.taskAttemptId()}")
+//      logInfo("Using the coalesce multi-file " + getFileFormatShortName + " reader, files: " +
+//        s"${filePaths.mkString(",")} task attemptid: ${TaskContext.get.taskAttemptId()}")
       buildBaseColumnarReaderForCoalescing(files, conf)
     }
   }

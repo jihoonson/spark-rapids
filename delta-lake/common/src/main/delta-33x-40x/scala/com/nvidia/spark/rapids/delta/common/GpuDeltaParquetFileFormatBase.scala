@@ -845,7 +845,6 @@ class DeltaMultiFileCloudNativeParquetPartitionReader(
       case _ => throw new IllegalStateException(
         "Unexpected HostMemoryBuffersWithMetaData type in DeltaMultiFileCloudNativeParquetPartitionReader")
     }.flatten.flatten
-    logError("combinedDvDescs length: " + combinedDvDescs.length)
     val filterTypes = combinedMeta.toCombine.map {
       case d: DeltaParquetHostMemoryBuffersWithMetaData =>
         d.filterTypeOpts
@@ -981,8 +980,6 @@ class DeltaMultiFileCloudNativeParquetPartitionReader(
     val dvDescOpts = deltaBuffer.dvDescriptorOpts.head
     val filterTypeOpts = deltaBuffer.filterTypeOpts.head
 //    val blockMetadata = hmbAndInfo.blockMeta
-
-    logError("dvDescOpts in readBufferToBatches: " + dvDescOpts.mkString(","))
 
     val parseOpts = closeOnExcept(hostBuffers) { _ =>
       getParquetOptions(readDataSchema, clippedSchema, useFieldId)

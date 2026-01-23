@@ -3224,12 +3224,6 @@ object MakeParquetTableProducer extends Logging {
                   rowGroupOffsets.orNull, rowGroupNumRows.orNull,
                   buffers:_*)
               } else if (deletionVectors.isDefined && deletionVectors.get.length > 1) {
-                logError("Number of deletion vectors: " + deletionVectors.get.length +
-                  ", number of row counts: " + deletionVectorRowCounts.get.length +
-                ", number of row group offsets: " +
-                  rowGroupOffsets.map(_.length).getOrElse(0) +
-                ", number of row group num rows: " +
-                  rowGroupNumRows.map(_.length).getOrElse(0))
                 DeltaLake.readDeltaParquet(
                   opts, deletionVectors.get, deletionVectorRowCounts.get,
                   rowGroupOffsets.orNull, rowGroupNumRows.orNull,
@@ -3254,7 +3248,6 @@ object MakeParquetTableProducer extends Logging {
         }
       }
       // Drop the first column if deletion vectors were used (native API prepends index column)
-      logError(s"table has ${table.getRowCount()} rows")
       val tableWithoutIndex = if (deletionVectors.isDefined) {
         MakeParquetTableProducer.dropFirstColumn(table)
       } else {
