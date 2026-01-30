@@ -240,9 +240,11 @@ class GpuDeltaParquetFileFormatBase(
               val filterTypeOpt = split.otherConstantMetadataColumnValues
                 .get(FILE_ROW_INDEX_FILTER_TYPE).asInstanceOf[Option[RowIndexFilterType]]
               val maybeSerializedDV = tablePath.map(tp =>
-                Array(RapidsDeletionVectorUtils.readDeletionVector(conf, dvDescriptorOpt, filterTypeOpt, tp)))
-              val (dvRowCounts, rowGroupOffsets, rowGroupNumRows) =
+                RapidsDeletionVectorUtils.readDeletionVector(conf, dvDescriptorOpt, filterTypeOpt, tp))
+              val (_, rowGroupOffsets, rowGroupNumRows) =
                 RapidsDeletionVectorUtils.getRowGroupMetadata(currentChunkedBlocks)
+              val dvInfo = maybeSerializedDV.map(serializedDV =>
+                new DeltaLake.DeletionVectorInfo(serializedDV, rowGroupOffsets, rowGroupNumRows))
 
               RmmRapidsRetryIterator.withRetryNoSplit(dataBuffer) { _ =>
                 // MakeParquetTableProducer will try to close the hostBuf
@@ -259,10 +261,7 @@ class GpuDeltaParquetFileFormatBase(
                   useFieldId, readDataSchema,
                   clippedParquetSchema, Array(split),
                   debugDumpPrefix, debugDumpAlways,
-                  maybeSerializedDV,
-                  deletionVectorRowCounts = Some(Array(dvRowCounts)),
-                  rowGroupOffsets = Some(rowGroupOffsets),
-                  rowGroupNumRows = Some(rowGroupNumRows)
+                  deletionVectorInfos = dvInfo.map(info => Array(info))
                 )
                 CachedGpuBatchIterator(producer, colTypes)
               }
@@ -986,11 +985,22 @@ class DeltaMultiFileCloudNativeParquetPartitionReader(
     }
     val colTypes = readDataSchema.fields.map(f => f.dataType)
 
-    val maybeSerializedDV = tablePath.map(tp =>
+    val maybeDVInfo = tablePath.map(tp =>
       dvDescOpts.zip(filterTypeOpts).map {
         case (desc, filterType) =>
-          RapidsDeletionVectorUtils.readDeletionVector(conf, desc, filterType, tp)
+          val serializedDV = RapidsDeletionVectorUtils.readDeletionVector(
+            conf, desc, filterType, tp)
+          new DeltaLake.DeletionVectorInfo(serializedDV,
+            deltaBuffer.rowGroupOffsets.head, deltaBuffer.rowGroupNumRows.head)
       })
+
+    val dvInfo = maybeDVInfo.get
+    logError("dvInfo size: " + dvInfo.length)
+    for (i <- dvInfo.indices) {
+      logError("index " + i + ": total rows to scan: " + dvInfo(i).totalNumRows +
+        ", row group offsets: " + dvInfo(i).rowGroupOffsets.mkString(",") +
+        ", row group num rows: " + dvInfo(i).rowGroupNumRows.mkString(","))
+    }
 
 //    val (dvRowCounts, rowGroupOffsets, rowGroupNumRows) =
 //      RapidsDeletionVectorUtils.getRowGroupMetadata(
@@ -1012,10 +1022,7 @@ class DeltaMultiFileCloudNativeParquetPartitionReader(
           dateRebaseMode, timestampRebaseMode, hasInt96Timestamps,
           isSchemaCaseSensitive, useFieldId, readDataSchema, clippedSchema, files,
           debugDumpPrefix, debugDumpAlways,
-          maybeSerializedDV,
-          deletionVectorRowCounts = Some(deltaBuffer.totalRowsToScan.head),
-          rowGroupOffsets = Some(deltaBuffer.rowGroupOffsets.head),
-          rowGroupNumRows = Some(deltaBuffer.rowGroupNumRows.head))
+          maybeDVInfo)
 
         val batchIter = CachedGpuBatchIterator(tableReader, colTypes)
 
