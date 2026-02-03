@@ -244,7 +244,7 @@ class GpuDeltaParquetFileFormatBase(
               val (_, rowGroupOffsets, rowGroupNumRows) =
                 RapidsDeletionVectorUtils.getRowGroupMetadata(currentChunkedBlocks)
               val dvInfo = maybeSerializedDV.map(serializedDV =>
-                new DeltaLake.DeletionVectorInfo(serializedDV, rowGroupOffsets, rowGroupNumRows))
+                new DeletionVector.DeletionVectorInfo(serializedDV, rowGroupOffsets, rowGroupNumRows))
 
               RmmRapidsRetryIterator.withRetryNoSplit(dataBuffer) { _ =>
                 // MakeParquetTableProducer will try to close the hostBuf
@@ -990,7 +990,7 @@ class DeltaMultiFileCloudNativeParquetPartitionReader(
         case (desc, filterType) =>
           val serializedDV = RapidsDeletionVectorUtils.readDeletionVector(
             conf, desc, filterType, tp)
-          new DeltaLake.DeletionVectorInfo(serializedDV,
+          new DeletionVector.DeletionVectorInfo(serializedDV,
             deltaBuffer.rowGroupOffsets.head, deltaBuffer.rowGroupNumRows.head)
       })
 

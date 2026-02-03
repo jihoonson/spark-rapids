@@ -3214,7 +3214,7 @@ object MakeParquetTableProducer extends Logging {
             NvtxIdWithMetrics(NvtxRegistry.PARQUET_DECODE, metrics(GPU_DECODE_TIME)) {
               if (deletionVectorInfos.isDefined) {
                // Single deletion vector - use simpler API
-                DeletionVector.readDeltaParquet(
+                DeletionVector.readParquet(
                   opts, buffers, deletionVectorInfos.get)
               } else {
                 // No deletion vectors - use standard API
@@ -3346,7 +3346,7 @@ case class DeletionVectorTableReader(
 
   logError("Using DeletionVectorTableReader for reading Parquet with deletion vectors")
 
-  private[this] val reader = new DeletionVector.ParquetChunkedReader(chunkSizeByteLimit,
+  private[this] val reader = DeletionVector.newParquetChunkedReader(chunkSizeByteLimit,
       maxChunkedReaderMemoryUsageSizeBytes, opts, buffers, dvInfos)
 
   private[this] lazy val splitsString = splits.mkString("; ")

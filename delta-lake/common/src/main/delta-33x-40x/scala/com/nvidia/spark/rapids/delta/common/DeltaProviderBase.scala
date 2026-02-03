@@ -24,7 +24,7 @@ import com.nvidia.spark.rapids.shims.InvalidateCacheShims
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression}
 import org.apache.spark.sql.delta.{DeltaLog, DeltaParquetFileFormat}
 import org.apache.spark.sql.delta.DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
@@ -219,7 +219,7 @@ object DVPredicatePushdown extends ShimPredicateHelper {
      */
     def isDVCondition(condition: Expression): Boolean = {
       condition.exists {
-        case And(left, right) =>
+        case GpuEqualTo(left, right) =>
           isRowDeletedColumnRef(left) && isLiteralZero(right) ||
             isRowDeletedColumnRef(right) && isLiteralZero(left)
         case _ => false
@@ -235,7 +235,7 @@ object DVPredicatePushdown extends ShimPredicateHelper {
 
     def isLiteralZero(expr: Expression): Boolean = {
       expr match {
-        case Literal(value, _) if value == 0 => true
+        case GpuLiteral(value, _) if value == 0 => true
         case _ => false
       }
     }
