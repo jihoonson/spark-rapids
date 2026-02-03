@@ -136,8 +136,20 @@ abstract class DeltaProviderBase extends DeltaIOProvider {
       InvalidateCacheShims.getInvalidateCache(cpuExec.invalidateCache))
   }
 
-  override def pushFilterDownToScan(plan: SparkPlan): SparkPlan = {
-    DeltaPredicatePushdown.pushPredicateDownToScan(plan)
+  override def pushDVPredicateDownToScan(plan: SparkPlan): SparkPlan = {
+    val pushed = DVPredicatePushdown.pushToScan(plan)
+
+    // Spark often generates a plan that looks like below for deletion vector scans:
+    // ...
+    // ProjectExec
+    //   FilterExec
+    //     ProjectExec
+    //       FileSourceScanExec
+    //
+    // The FilterExec can be removed during the pushdown if the only remaining predicates
+    // are deletion vector predicates. However, this leaves two consecutive ProjectExecs
+    // which is unnecessary. So we merge them here.
+    DVPredicatePushdown.mergeProjects(pushed)
   }
 
   // TODO: fix this if "is_row_deleted" is pushed down to scan
@@ -194,22 +206,50 @@ abstract class DeltaProviderBase extends DeltaIOProvider {
 
 }
 
-object DeltaPredicatePushdown extends ShimPredicateHelper {
-  def pushPredicateDownToScan(plan: SparkPlan): SparkPlan = {
+object DVPredicatePushdown extends ShimPredicateHelper {
+
+  /**
+   * Pushes down deletion vector predicates to scan level by removing them from the FilterExec.
+   * The deletion vector predicates will be processed in the scan instead.
+   */
+  def pushToScan(plan: SparkPlan): SparkPlan = {
+
+    /**
+     * Is the condition a form of "IS_ROW_DELETED_COLUMN_NAME == 0"?
+     */
+    def isDVCondition(condition: Expression): Boolean = {
+      condition.exists {
+        case And(left, right) =>
+          isRowDeletedColumnRef(left) && isLiteralZero(right) ||
+            isRowDeletedColumnRef(right) && isLiteralZero(left)
+        case _ => false
+      }
+    }
+
+    def isRowDeletedColumnRef(expr: Expression): Boolean = {
+      expr match {
+        case attr: AttributeReference if attr.name == IS_ROW_DELETED_COLUMN_NAME => true
+        case _ => false
+      }
+    }
+
+    def isLiteralZero(expr: Expression): Boolean = {
+      expr match {
+        case Literal(value, _) if value == 0 => true
+        case _ => false
+      }
+    }
+
     plan.transformUp {
       case filter @ GpuFilterExec(condition, child)
         if condition.references.exists(_.name == IS_ROW_DELETED_COLUMN_NAME) =>
-        // TODO: decompose the condition and perform the exact match whether the condition
-        // is the DV predicate or not
-
         // Decompose the condition into CNF
         val conjuncts = splitConjunctivePredicates(condition)
-        // the dv condition should have one of its references as IS_ROW_DELETED_COLUMN_NAME
-        // and the other reference should be a literal of 0.
+        // the dv condition should be "IS_ROW_DELETED_COLUMN_NAME == 0"
         val (_, otherPredicates) = conjuncts.partition(p =>
-          p.references.size == 1
-            && p.references.exists(_.name == IS_ROW_DELETED_COLUMN_NAME)
-          // TODO: verify that the other reference is a literal 0
+          p.references.size == 1 &&
+            p.references.exists(_.name == IS_ROW_DELETED_COLUMN_NAME) &&
+            isDVCondition(p)
         )
 
         if (otherPredicates.isEmpty) {
@@ -217,6 +257,17 @@ object DeltaPredicatePushdown extends ShimPredicateHelper {
         } else {
           filter.copy(condition = otherPredicates.reduce(GpuAnd))(filter.coalesceAfter)
         }
+    }
+  }
+
+  /**
+   * Merges consecutive ProjectExecs into one.
+   */
+  def mergeProjects(plan: SparkPlan): SparkPlan = {
+    plan.transformUp {
+      case GpuProjectExec(projList1,
+      GpuProjectExec(_, child, enablePreSplit1), enablePreSplit2) =>
+        GpuProjectExec(projList1, child, enablePreSplit1 && enablePreSplit2)
     }
   }
 }

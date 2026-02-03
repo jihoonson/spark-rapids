@@ -804,8 +804,8 @@ class GpuTransitionOverrides extends Rule[SparkPlan] {
     if (rapidsConf.isSqlEnabled && rapidsConf.isSqlExecuteOnGPU) {
       GpuOverrides.logDuration(rapidsConf.shouldExplain,
         t => f"GPU plan transition optimization took $t%.2f ms") {
-        var updatedPlan = DeltaProvider().pruneFileMetadata(plan)
-        updatedPlan = DeltaProvider().pushFilterDownToScan(updatedPlan)
+        var updatedPlan = DeltaProvider().pushDVPredicateDownToScan(plan)
+        updatedPlan = DeltaProvider().pruneFileMetadata(plan)
         updatedPlan = insertHashOptimizeSorts(updatedPlan)
         updatedPlan = updateScansForInputAndOrder(updatedPlan)
         if (rapidsConf.isFileScanPrunePartitionEnabled) {

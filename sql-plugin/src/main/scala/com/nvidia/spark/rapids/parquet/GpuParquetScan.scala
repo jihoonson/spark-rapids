@@ -3187,7 +3187,7 @@ object MakeParquetTableProducer extends Logging {
       splits: Array[PartitionedFile],
       debugDumpPrefix: Option[String],
       debugDumpAlways: Boolean,
-      deletionVectorInfos: Option[Array[DeltaLake.DeletionVectorInfo]] = None
+      deletionVectorInfos: Option[Array[DeletionVector.DeletionVectorInfo]] = None
   ): GpuDataProducer[Table] = {
     debugDumpPrefix.foreach { prefix =>
       if (debugDumpAlways) {
@@ -3214,7 +3214,7 @@ object MakeParquetTableProducer extends Logging {
             NvtxIdWithMetrics(NvtxRegistry.PARQUET_DECODE, metrics(GPU_DECODE_TIME)) {
               if (deletionVectorInfos.isDefined) {
                // Single deletion vector - use simpler API
-                DeltaLake.readDeltaParquet(
+                DeletionVector.readDeltaParquet(
                   opts, buffers, deletionVectorInfos.get)
               } else {
                 // No deletion vectors - use standard API
@@ -3342,11 +3342,11 @@ case class DeletionVectorTableReader(
     splits: Array[PartitionedFile],
     debugDumpPrefix: Option[String],
     debugDumpAlways: Boolean,
-    dvInfos: Array[DeltaLake.DeletionVectorInfo]) extends GpuDataProducer[Table] with Logging {
+    dvInfos: Array[DeletionVector.DeletionVectorInfo]) extends GpuDataProducer[Table] with Logging {
 
   logError("Using DeletionVectorTableReader for reading Parquet with deletion vectors")
 
-  private[this] val reader = new DeltaLake.ParquetChunkedReader(chunkSizeByteLimit,
+  private[this] val reader = new DeletionVector.ParquetChunkedReader(chunkSizeByteLimit,
       maxChunkedReaderMemoryUsageSizeBytes, opts, buffers, dvInfos)
 
   private[this] lazy val splitsString = splits.mkString("; ")
