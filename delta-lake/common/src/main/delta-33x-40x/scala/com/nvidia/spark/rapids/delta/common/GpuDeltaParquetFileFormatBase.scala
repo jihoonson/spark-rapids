@@ -41,7 +41,7 @@ import org.apache.spark.sql.connector.read.{PartitionReader, PartitionReaderFact
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArrayFormat, StoredBitmap}
+import org.apache.spark.sql.delta.deletionvectors.{RapidsDeletionVectorStoredBitmap, StoredBitmap}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -55,7 +55,6 @@ import org.apache.spark.sql.vectorized.{ColumnarBatch, ColumnVector => SparkVect
 import org.apache.spark.util.SerializableConfiguration
 
 //import java.nio.{ByteBuffer, ByteOrder}
-import java.io.ByteArrayInputStream
 import java.nio.charset.StandardCharsets
 //import java.util.UUID
 //import java.io.FileOutputStream
@@ -1050,42 +1049,37 @@ object RapidsDeletionVectorUtils {
 
   val PARQUET_MAGIC = "PAR1".getBytes(StandardCharsets.US_ASCII)
 
-  lazy val SERIALIZED_EMPTY_BITMAP: HostMemoryBuffer = {
-    val buffer = HostMemoryBuffer.allocate(8)
-    buffer.setLong(0, 0L)
-    buffer
-  }
-
-  val MAGIC_NUMBER_BYTE_SIZE = 4
+  /**
+   * The "Delta" roaring bitmap serialization formats begin with a 4-byte magic number.
+   * When converting to the "standard" roaring bitmap serialization format, this magic number
+   * should be stripped. For details, see:
+   * https://github.com/delta-io/delta/blob/ccd3092da05a68027bf9be9ec4273a810b4b9ef3/spark/src/main/scala/org/apache/spark/sql/delta/deletionvectors/RoaringBitmapArray.scala#L512-L515
+   */
+  val DELTA_BITMAP_MAGIC_NUMBER_BYTE_SIZE = 4
 
   def readDeletionVector(conf: Configuration,
       dvDescriptorOpt: Option[String],
       filterTypeOpt: Option[RowIndexFilterType],
-      tablePath: String,
-      logger: Option[String => Unit] = None): HostMemoryBuffer = {
+      tablePath: String): HostMemoryBuffer = {
     // Fetch the DV descriptor from the partitioned file
     if (dvDescriptorOpt.isDefined && filterTypeOpt.isDefined) {
       val dvDesc = DeletionVectorDescriptor.deserializeFromBase64(
         dvDescriptorOpt.get.asInstanceOf[String])
-      val dvStore = new HadoopFileSystemDVStore(conf)
-      val bitmap = StoredBitmap.create(dvDesc, new Path(tablePath)).load(dvStore)
-      logger.map(l => l("bitmap cardinality: " + bitmap.cardinality))
-      val serializedDeltaBitmap = bitmap.serializeAsByteArray(RoaringBitmapArrayFormat.Portable)
-      val serializedStandardBitmapSize = serializedDeltaBitmap.length - MAGIC_NUMBER_BYTE_SIZE
-      val serializedStandardBitmap = HostMemoryBuffer.allocate(serializedStandardBitmapSize)
-      // Skip the magic number at the start
-      withResource(new ByteArrayInputStream(serializedDeltaBitmap, MAGIC_NUMBER_BYTE_SIZE,
-        serializedStandardBitmapSize)) { bais =>
-        serializedStandardBitmap.copyFromStream(0, bais, serializedStandardBitmapSize)
-      }
-
-//      withResource(new FileOutputStream("/home/jihoons/dv_serialized_" + UUID.randomUUID()
-//        .toString + ".bin")) { fos =>
-//        fos.write(serializedInStandard)
+//      val dvStore = new HadoopFileSystemDVStore(conf)
+//      val bitmap = StoredBitmap.create(dvDesc, new Path(tablePath)).load(dvStore)
+//      val serializedDeltaBitmap = bitmap.serializeAsByteArray(RoaringBitmapArrayFormat.Portable)
+//      val serializedStandardBitmapSize =
+//        serializedDeltaBitmap.length - DELTA_BITMAP_MAGIC_NUMBER_BYTE_SIZE
+//      val serializedStandardBitmap = HostMemoryBuffer.allocate(serializedStandardBitmapSize)
+//      // Skip the magic number at the start
+//      withResource(new ByteArrayInputStream(serializedDeltaBitmap,
+//        DELTA_BITMAP_MAGIC_NUMBER_BYTE_SIZE, serializedStandardBitmapSize)) { bais =>
+//        serializedStandardBitmap.copyFromStream(0, bais, serializedStandardBitmapSize)
 //      }
-//      val tmpBuf = ByteBuffer.wrap(serializedInStandard)
-//      tmpBuf.order(ByteOrder.LITTLE_ENDIAN)
-//      logger.map(l => l("number of buckets in the bitmap in scala: " + tmpBuf.getLong(0)))
+
+      val dvStore = new RapidsDeletionVectorStore(conf)
+      val serializedStandardBitmap = RapidsDeletionVectorStoredBitmap(dvDesc, new Path(tablePath))
+        .load(dvStore)
 
       filterTypeOpt.get match {
         case RowIndexFilterType.IF_CONTAINED =>
@@ -1100,8 +1094,7 @@ object RapidsDeletionVectorUtils {
         s"Both ${FILE_ROW_INDEX_FILTER_ID_ENCODED} and ${FILE_ROW_INDEX_FILTER_TYPE} " +
           "should either both have values or no values at all.")
     } else {
-      logger.map(l => l("No deletion vector found for the file"))
-      SERIALIZED_EMPTY_BITMAP
+      RapidsDeletionVectorStoredBitmap.EMPTY_BITMAP
     }
   }
 
