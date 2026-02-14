@@ -41,7 +41,7 @@ import org.apache.spark.sql.connector.read.{PartitionReader, PartitionReaderFact
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.deletionvectors.{RapidsDeletionVectorStoredBitmap, StoredBitmap}
+import org.apache.spark.sql.delta.deletionvectors.{RapidsDeletionVectorStore, RapidsDeletionVectorStoredBitmap, StoredBitmap}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -1065,21 +1065,10 @@ object RapidsDeletionVectorUtils {
     if (dvDescriptorOpt.isDefined && filterTypeOpt.isDefined) {
       val dvDesc = DeletionVectorDescriptor.deserializeFromBase64(
         dvDescriptorOpt.get.asInstanceOf[String])
-//      val dvStore = new HadoopFileSystemDVStore(conf)
-//      val bitmap = StoredBitmap.create(dvDesc, new Path(tablePath)).load(dvStore)
-//      val serializedDeltaBitmap = bitmap.serializeAsByteArray(RoaringBitmapArrayFormat.Portable)
-//      val serializedStandardBitmapSize =
-//        serializedDeltaBitmap.length - DELTA_BITMAP_MAGIC_NUMBER_BYTE_SIZE
-//      val serializedStandardBitmap = HostMemoryBuffer.allocate(serializedStandardBitmapSize)
-//      // Skip the magic number at the start
-//      withResource(new ByteArrayInputStream(serializedDeltaBitmap,
-//        DELTA_BITMAP_MAGIC_NUMBER_BYTE_SIZE, serializedStandardBitmapSize)) { bais =>
-//        serializedStandardBitmap.copyFromStream(0, bais, serializedStandardBitmapSize)
-//      }
 
-      val dvStore = new RapidsDeletionVectorStore(conf)
-      val serializedStandardBitmap = RapidsDeletionVectorStoredBitmap(dvDesc, new Path(tablePath))
-        .load(dvStore)
+      val dvStore = RapidsDeletionVectorStore.createInstance(conf)
+      val storedBitmap = RapidsDeletionVectorStoredBitmap(dvDesc, new Path(tablePath))
+      val serializedStandardBitmap = storedBitmap.load(dvStore)
 
       filterTypeOpt.get match {
         case RowIndexFilterType.IF_CONTAINED =>
