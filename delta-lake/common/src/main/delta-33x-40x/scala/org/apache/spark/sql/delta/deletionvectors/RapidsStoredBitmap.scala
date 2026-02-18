@@ -29,7 +29,7 @@ case class RapidsDeletionVectorStoredBitmap(
 
   def load(dvStore: RapidsDeletionVectorStore): HostMemoryBuffer = {
     val buffer = if (isEmpty) {
-      RapidsDeletionVectorStoredBitmap.EMPTY_BITMAP
+      RapidsDeletionVectorStoredBitmap.serializedEmptyBitmap()
     } else {
       if (isInline) {
         throw new UnsupportedOperationException("Inline deletion vectors are not supported")
@@ -55,10 +55,10 @@ case class RapidsDeletionVectorStoredBitmap(
 object RapidsDeletionVectorStoredBitmap {
 
   /**
-   * A serialized empty bitmap in host memory buffer. For details of the serialization format, see:
+   * Return a serialized empty bitmap in host memory buffer. For details of the serialization format, see:
    * https://github.com/RoaringBitmap/RoaringFormatSpec/blob/8c4f7c7087c2a3a4fa560a34c669be673264f3ad/README.md#extension-for-64-bit-implementations
    */
-  lazy val EMPTY_BITMAP: HostMemoryBuffer = {
+  def serializedEmptyBitmap(): HostMemoryBuffer = {
     val buffer = HostMemoryBuffer.allocate(8)
     buffer.setLong(0, 0L)
     buffer

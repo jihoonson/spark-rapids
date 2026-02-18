@@ -3214,6 +3214,7 @@ object MakeParquetTableProducer extends Logging {
             NvtxIdWithMetrics(NvtxRegistry.PARQUET_DECODE, metrics(GPU_DECODE_TIME)) {
               if (deletionVectorInfos.isDefined) {
                // Single deletion vector - use simpler API
+                // TODO: close HostMemoryBuffers after reading is done. Consider making DeletionVectorInfoArray closeable.
                 DeletionVector.readParquet(
                   opts, buffers, deletionVectorInfos.get)
               } else {
@@ -3390,6 +3391,7 @@ case class DeletionVectorTableReader(
   override def close(): Unit = {
     reader.close()
     buffers.safeClose()
+//    dvInfos.map(_.serializedBitmap).safeClose()
   }
 }
 

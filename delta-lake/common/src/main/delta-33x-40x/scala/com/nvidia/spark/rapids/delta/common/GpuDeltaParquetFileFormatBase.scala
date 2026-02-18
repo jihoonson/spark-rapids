@@ -239,7 +239,7 @@ class GpuDeltaParquetFileFormatBase(
               val filterTypeOpt = split.otherConstantMetadataColumnValues
                 .get(FILE_ROW_INDEX_FILTER_TYPE).asInstanceOf[Option[RowIndexFilterType]]
               val maybeSerializedDV = tablePath.map(tp =>
-                RapidsDeletionVectorUtils.readDeletionVector(conf, dvDescriptorOpt, filterTypeOpt, tp))
+                RapidsDeletionVectorUtils.loadDeletionVector(conf, dvDescriptorOpt, filterTypeOpt, tp))
               val (rowGroupOffsets, rowGroupNumRows) =
                 RapidsDeletionVectorUtils.getRowGroupMetadata(currentChunkedBlocks)
               val dvInfo = maybeSerializedDV.map(serializedDV =>
@@ -973,7 +973,7 @@ class DeltaMultiFileCloudNativeParquetPartitionReader(
     val maybeDVInfo = tablePath.map(tp =>
       dvDescOpts.zip(filterTypeOpts).map {
         case (desc, filterType) =>
-          val serializedDV = RapidsDeletionVectorUtils.readDeletionVector(
+          val serializedDV = RapidsDeletionVectorUtils.loadDeletionVector(
             conf, desc, filterType, tp)
           new DeletionVector.DeletionVectorInfo(serializedDV,
             deltaBuffer.rowGroupOffsets.head, deltaBuffer.rowGroupNumRows.head)
@@ -1043,7 +1043,7 @@ object RapidsDeletionVectorUtils {
    */
   val DELTA_BITMAP_MAGIC_NUMBER_BYTE_SIZE = 4
 
-  def readDeletionVector(conf: Configuration,
+  def loadDeletionVector(conf: Configuration,
       dvDescriptorOpt: Option[String],
       filterTypeOpt: Option[RowIndexFilterType],
       tablePath: String): HostMemoryBuffer = {
@@ -1069,7 +1069,7 @@ object RapidsDeletionVectorUtils {
         s"Both ${FILE_ROW_INDEX_FILTER_ID_ENCODED} and ${FILE_ROW_INDEX_FILTER_TYPE} " +
           "should either both have values or no values at all.")
     } else {
-      RapidsDeletionVectorStoredBitmap.EMPTY_BITMAP
+      RapidsDeletionVectorStoredBitmap.serializedEmptyBitmap()
     }
   }
 
