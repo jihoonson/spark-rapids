@@ -130,6 +130,7 @@ def test_delta_deletion_vector_multi_threaded_combine_read(spark_tmp_path, use_c
                     reason="Delta Lake deletion vector support is required")
 def test_delta_deletion_vector_read(spark_tmp_path, use_cdf, use_chunked, reader_type, use_metadata_row_index):
     data_path = spark_tmp_path + "/DELTA_DATA"
+    # data_path = "/home/jihoons/Projects/spark-rapids-2/deletion_vector_read_test/DELTA_DATA"
     val_range = 64
     repeat_count = 18
     conf = {"spark.databricks.delta.delete.deletionVectors.persistent": "true",
@@ -151,9 +152,19 @@ def test_delta_deletion_vector_read(spark_tmp_path, use_cdf, use_chunked, reader
         # assert num_deleted > 99, "Expected enough rows to be deleted"
     with_cpu_session(setup_tables, conf=conf)
 
+    # def load_table(spark):
+    #     spark.sql(f"CREATE TABLE test_dv USING DELTA LOCATION '{data_path}' TBLPROPERTIES ('delta.enableDeletionVectors' = 'true', 'delta.enableChangeDataFeed' = 'false')")
+    #     return None
+    # with_cpu_session(load_table, conf=conf)
+
     assert_gpu_and_cpu_are_equal_collect(
         lambda spark: spark.sql("SELECT * FROM delta.`{}`".format(data_path)),
         conf=conf)
+
+    # def drop_table(spark):
+    #     spark.sql("DROP TABLE IF EXISTS test_dv")
+    #     return None
+    # with_cpu_session(drop_table, conf=conf)
 
 
 def do_test_scan_split(spark_tmp_path, enable_deletion_vectors, expected_num_partitions, post_setup_table_func=None):
