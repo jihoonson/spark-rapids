@@ -42,12 +42,6 @@ case class RapidsDeletionVectorStoredBitmap(
     buffer
   }
 
-  def size: Int = dvDescriptor.sizeInBytes
-
-  def cardinality: Long = dvDescriptor.cardinality
-
-  lazy val getUniqueId: String = dvDescriptor.serializeToBase64()
-
   private def isEmpty: Boolean = dvDescriptor.isEmpty
 
   private def isInline: Boolean = dvDescriptor.isInline
