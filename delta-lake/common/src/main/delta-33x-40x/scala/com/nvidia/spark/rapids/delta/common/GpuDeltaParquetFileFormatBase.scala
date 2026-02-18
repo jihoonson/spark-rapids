@@ -240,7 +240,7 @@ class GpuDeltaParquetFileFormatBase(
                 .get(FILE_ROW_INDEX_FILTER_TYPE).asInstanceOf[Option[RowIndexFilterType]]
               val maybeSerializedDV = tablePath.map(tp =>
                 RapidsDeletionVectorUtils.readDeletionVector(conf, dvDescriptorOpt, filterTypeOpt, tp))
-              val (_, rowGroupOffsets, rowGroupNumRows) =
+              val (rowGroupOffsets, rowGroupNumRows) =
                 RapidsDeletionVectorUtils.getRowGroupMetadata(currentChunkedBlocks)
               val dvInfo = maybeSerializedDV.map(serializedDV =>
                 new DeletionVector.DeletionVectorInfo(serializedDV, rowGroupOffsets, rowGroupNumRows))
@@ -705,7 +705,6 @@ class DeltaMultiFileCloudNativeParquetPartitionReader(
       override val numRows: Long,
       dvDescriptorOpts: Array[Array[Option[String]]], // must be aligned with filterTypeOpts
       filterTypeOpts: Array[Array[Option[RowIndexFilterType]]], // must be aligned with dvDescriptorOpts,
-      totalRowsToScan: Array[Array[Int]], // total number of rows to scan before applying DVs
       rowGroupOffsets: Array[Array[Long]], // row group offsets for each buffer
       rowGroupNumRows: Array[Array[Int]], // number of rows in each row group for each buffer
       override val allPartValues: Option[Array[(Long, InternalRow)]] = None)
@@ -723,7 +722,6 @@ class DeltaMultiFileCloudNativeParquetPartitionReader(
       override val allPartValues: Option[Array[(Long, InternalRow)]],
       dvDescriptorOpts: Array[Array[Option[String]]], // must be aligned with memBuffersAndSizes
       filterTypeOpts: Array[Array[Option[RowIndexFilterType]]], // must be aligned with memBuffersAndSizes
-      totalRowsToScan: Array[Array[Int]], // total number of rows to scan before applying DVs
       rowGroupOffsets: Array[Array[Long]], // row group offsets for each buffer
       rowGroupNumRows: Array[Array[Int]] // number of rows in each row group for each buffer
   ) extends HostMemoryBuffersWithMetaData {
@@ -742,13 +740,11 @@ class DeltaMultiFileCloudNativeParquetPartitionReader(
       }
       val dvDescs = dvDescriptorOpts.drop(1)
       val filterTypes = filterTypeOpts.drop(1)
-      val newTotalRowsToScan = totalRowsToScan.drop(1)
       val newRowGroupOffsets = rowGroupOffsets.drop(1)
       val newRowGroupNumRows = rowGroupNumRows.drop(1)
       this.copy(memBuffersAndSizes = remainingBuffers,
         dvDescriptorOpts = dvDescs,
         filterTypeOpts = filterTypes,
-        totalRowsToScan = newTotalRowsToScan,
         rowGroupOffsets = newRowGroupOffsets,
         rowGroupNumRows = newRowGroupNumRows)
     }
@@ -807,7 +803,7 @@ class DeltaMultiFileCloudNativeParquetPartitionReader(
       .get(FILE_ROW_INDEX_FILTER_TYPE).asInstanceOf[Option[RowIndexFilterType]]
     val hmbAndInfo = memBuffersAndSize.head
     val dataBlock = hmbAndInfo.blockMeta.map(_.asInstanceOf[ParquetDataBlock].dataBlock)
-    val (dvRowCounts, rowGroupOffsets, rowGroupNumRows) = RapidsDeletionVectorUtils
+    val (rowGroupOffsets, rowGroupNumRows) = RapidsDeletionVectorUtils
       .getRowGroupMetadata(dataBlock)
 
     DeltaParquetHostMemoryBuffersWithMetaData(
@@ -822,7 +818,6 @@ class DeltaMultiFileCloudNativeParquetPartitionReader(
       None,
       Array(Array(dvDescriptorOpt)),
       Array(Array(filterTypeOpt)),
-      Array(Array(dvRowCounts)),
       Array(rowGroupOffsets),
       Array(rowGroupNumRows)
     )
@@ -851,14 +846,6 @@ class DeltaMultiFileCloudNativeParquetPartitionReader(
       case _ => throw new IllegalStateException(
         "Unexpected HostMemoryBuffersWithMetaData type in DeltaMultiFileCloudNativeParquetPartitionReader")
     }.flatten.flatten
-    val totalRowsToScan: Array[Int] = combinedMeta.toCombine.flatMap {
-      case d: DeltaParquetHostMemoryBuffersWithMetaData =>
-        d.totalRowsToScan
-      case d: DeltaParquetHostMemoryEmptyMetaData =>
-        d.totalRowsToScan
-      case _ => throw new IllegalStateException(
-        "Unexpected HostMemoryBuffersWithMetaData type in DeltaMultiFileCloudNativeParquetPartitionReader")
-    }.flatten
     val rowGroupOffsets: Array[Long] = combinedMeta.toCombine.flatMap {
       case d: DeltaParquetHostMemoryBuffersWithMetaData =>
         d.rowGroupOffsets
@@ -939,7 +926,6 @@ class DeltaMultiFileCloudNativeParquetPartitionReader(
         Some(combinedMeta.allPartValues),
         Array(combinedDvDescs),
         Array(filterTypes),
-        Array(totalRowsToScan),
         Array(rowGroupOffsets),
         Array(rowGroupNumRows)
       )
@@ -1087,12 +1073,7 @@ object RapidsDeletionVectorUtils {
     }
   }
 
-  def getRowGroupMetadata(blocks: Seq[BlockMetaData]): (Int, Array[Long], Array[Int]) = {
-    val dvRowCounts = blocks.map(_.getRowCount).sum
-    if (!dvRowCounts.isValidInt) {
-      throw new IllegalStateException(
-        s"Total row count $dvRowCounts from deletion vector is not a valid int")
-    }
+  def getRowGroupMetadata(blocks: Seq[BlockMetaData]): (Array[Long], Array[Int]) = {
     val rowGroupOffsets = blocks.map(_.getRowIndexOffset)
     if (rowGroupOffsets.find(offset => offset == -1).isDefined) {
       throw new IllegalStateException("Found invalid row group offset")
@@ -1101,7 +1082,7 @@ object RapidsDeletionVectorUtils {
     if (rowGroupNumRows.find(numRows => !numRows.isValidInt).isDefined) {
       throw new IllegalStateException("Found invalid row group num rows")
     }
-    (dvRowCounts.toInt, rowGroupOffsets.toArray, rowGroupNumRows.map(_.toInt).toArray)
+    (rowGroupOffsets.toArray, rowGroupNumRows.map(_.toInt).toArray)
   }
 
   /**
