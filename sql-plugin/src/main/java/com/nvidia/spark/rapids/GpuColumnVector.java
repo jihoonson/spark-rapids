@@ -897,9 +897,31 @@ public class GpuColumnVector extends GpuColumnVectorBase {
    * @return a ColumnVector filled with nulls. It should be closed to avoid memory leak.
    */
   public static ai.rapids.cudf.ColumnVector columnVectorFromNull(int count, DataType sparkType) {
+    return columnVectorFromNull(count, sparkType, false);
+  }
+
+  /**
+   * Creates a cudf ColumnVector where the elements are filled with nulls.
+   *
+   * @param count the row number of the output column
+   * @param sparkType the expected data type of the output column
+   * @param optimizeAllNullNested if true, use the optimized all-null nested construction path
+   * @return a ColumnVector filled with nulls. It should be closed to avoid memory leak.
+   */
+  public static ai.rapids.cudf.ColumnVector columnVectorFromNull(
+      int count, DataType sparkType, boolean optimizeAllNullNested) {
     try (Scalar s = GpuScalar.from(null, sparkType)) {
+      if (optimizeAllNullNested && isNestedSparkType(sparkType)) {
+        return ai.rapids.cudf.ColumnVector.fromNullScalarOptimized(s, count);
+      }
       return ai.rapids.cudf.ColumnVector.fromScalar(s, count);
     }
+  }
+
+  private static boolean isNestedSparkType(DataType sparkType) {
+    return sparkType instanceof ArrayType ||
+        sparkType instanceof MapType ||
+        sparkType instanceof StructType;
   }
 
   /**

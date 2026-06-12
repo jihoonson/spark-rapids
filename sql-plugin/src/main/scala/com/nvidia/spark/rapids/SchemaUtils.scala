@@ -31,6 +31,7 @@ import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.execution.QueryExecutionException
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils.FIELD_ID_METADATA_KEY
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.rapids.execution.TrampolineUtil
 import org.apache.spark.sql.types._
 
@@ -124,6 +125,11 @@ object SchemaUtils {
           !TrampolineUtil.sameType(readSchema, tableSchema)
     }
     if (isSchemaEvolutionNeeded) {
+      val rapidsConf = new RapidsConf(SQLConf.get)
+      val optimizeAllNullNestedFromScalar =
+        rapidsConf.isSchemaEvolutionFromScalarAllNullNestedEnabled
+      val optimizeAllNullNestedCopy =
+        rapidsConf.isSchemaEvolutionCopyAllNullNestedEnabled
       withResource(table) { _ =>
         val name2TypeIdMap = buildTypeIdMapFromSchema(tableSchema, isCaseSensitive)
         val newColumns = readSchema.safeMap { rf =>
@@ -133,17 +139,23 @@ object SchemaUtils {
             val cv = table.getColumn(typeAndId._2)
             withResource(new ArrayBuffer[ColumnView]) { toClose =>
               val newCol = evolveColumnRecursively(cv, typeAndId._1, rf.dataType, isCaseSensitive,
-                toClose, castFunc, needCast, allowNonStructWrapping)
+                toClose, castFunc, needCast, allowNonStructWrapping,
+                optimizeAllNullNestedFromScalar)
               if (newCol == cv) {
                 cv.incRefCount()
               } else {
                 toClose += newCol
-                newCol.copyToColumnVector()
+                if (optimizeAllNullNestedCopy) {
+                  newCol.copyToColumnVectorForSchemaEvolution()
+                } else {
+                  newCol.copyToColumnVector()
+                }
               }
             }
           } else {
             // Return a null column if the name is not found in the table.
-            GpuColumnVector.columnVectorFromNull(table.getRowCount.toInt, rf.dataType)
+            GpuColumnVector.columnVectorFromNull(
+              table.getRowCount.toInt, rf.dataType, optimizeAllNullNestedFromScalar)
           }
         }
         withResource(newColumns) { newCols =>
@@ -160,7 +172,8 @@ object SchemaUtils {
       isCaseSensitive: Boolean, toClose: ArrayBuffer[ColumnView],
       castFunc: Option[(ColumnView, DataType, DataType) => ColumnView],
       needCast: Boolean,
-      allowNonStructWrapping: Boolean): ColumnView = {
+      allowNonStructWrapping: Boolean,
+      optimizeAllNullNestedFromScalar: Boolean): ColumnView = {
     // An util function to add a view to the buffer "toClose".
     val addToClose = (v: ColumnView) => {
       toClose += v
@@ -194,7 +207,8 @@ object SchemaUtils {
               val typeAndId = typeIdMap(f.name)
               val cv = addToClose(actualCol.getChildColumnView(typeAndId._2))
               val newChild = evolveColumnRecursively(cv, typeAndId._1, f.dataType,
-                isCaseSensitive, toClose, castFunc, needCast, allowNonStructWrapping)
+                isCaseSensitive, toClose, castFunc, needCast, allowNonStructWrapping,
+                optimizeAllNullNestedFromScalar)
               if (newChild != cv) {
                 addToClose(newChild)
               }
@@ -202,7 +216,7 @@ object SchemaUtils {
             } else {
               // Return a null column if the name is not found in the table.
               addToClose(GpuColumnVector.columnVectorFromNull(
-                actualCol.getRowCount.toInt, f.dataType))
+                actualCol.getRowCount.toInt, f.dataType, optimizeAllNullNestedFromScalar))
             }
           }
           val opNullCount =
@@ -215,7 +229,8 @@ object SchemaUtils {
       case (colAt: ArrayType, toAt: ArrayType) =>
         val child = addToClose(col.getChildColumnView(0))
         val newChild = evolveColumnRecursively(child, colAt.elementType, toAt.elementType,
-          isCaseSensitive, toClose, castFunc, needCast, allowNonStructWrapping)
+          isCaseSensitive, toClose, castFunc, needCast, allowNonStructWrapping,
+          optimizeAllNullNestedFromScalar)
         if (child == newChild) {
           col
         } else {
@@ -231,7 +246,7 @@ object SchemaUtils {
         val processView = (id: Int, srcType: DataType, distType: DataType) => {
           val view = addToClose(listChild.getChildColumnView(id))
           val newView = evolveColumnRecursively(view, srcType, distType, isCaseSensitive,
-            toClose, castFunc, needCast, allowNonStructWrapping)
+            toClose, castFunc, needCast, allowNonStructWrapping, optimizeAllNullNestedFromScalar)
           if (newView != view) {
             newStructChildren += addToClose(newView)
             newStructIndices += id

@@ -2853,6 +2853,23 @@ val SHUFFLE_COMPRESSION_LZ4_CHUNK_SIZE = conf("spark.rapids.shuffle.compression.
       .booleanConf
       .createWithDefault(true)
 
+  val SCHEMA_EVOLUTION_FROM_SCALAR_ALL_NULL_NESTED_ENABLED =
+    conf("spark.rapids.sql.schemaEvolution.fromScalarAllNullNested.enabled")
+      .doc("When true, schema evolution uses an optimized cuDF path to create all-null " +
+        "nested columns from null scalars. This is a prototype optimization.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
+  val SCHEMA_EVOLUTION_COPY_ALL_NULL_NESTED_ENABLED =
+    conf("spark.rapids.sql.schemaEvolution.copyAllNullNested.enabled")
+      .doc("When true, schema evolution uses an optimized cuDF copy path that skips " +
+        "redundant null sanitization for all-null nested children. This is a prototype " +
+        "optimization.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   val TEST_IO_ENCRYPTION = conf("spark.rapids.test.io.encryption")
     .doc("Only for tests: verify for IO encryption")
     .internal()
@@ -4052,6 +4069,12 @@ class RapidsConf(conf: Map[String, String]) extends Logging {
   lazy val chunkedPackBounceBufferSize: Long = get(CHUNKED_PACK_BOUNCE_BUFFER_SIZE)
 
   lazy val isProjectSplitRetryEnabled: Boolean = get(PROJECT_SPLIT_RETRY_ENABLED)
+
+  lazy val isSchemaEvolutionFromScalarAllNullNestedEnabled: Boolean =
+    get(SCHEMA_EVOLUTION_FROM_SCALAR_ALL_NULL_NESTED_ENABLED)
+
+  lazy val isSchemaEvolutionCopyAllNullNestedEnabled: Boolean =
+    get(SCHEMA_EVOLUTION_COPY_ALL_NULL_NESTED_ENABLED)
 
   lazy val chunkedPackBounceBufferCount: Int = get(CHUNKED_PACK_BOUNCE_BUFFER_COUNT)
 
