@@ -390,6 +390,15 @@ class GpuParquetWriter(
   }
 
   private def deepTransformColumn(cv: ColumnVector, dt: DataType): ColumnVector = {
+    // T0-A: all-null struct fast path — skip the recursive deepTransform and
+    // return a zero-copy all-null column with the evolved schema directly.
+    // Condition: STRUCT type, size > 0, null_count == size (O(1) check, no GPU call).
+    // Uses optimizeAllNullNested=true to bypass superimpose_and_sanitize_nulls.
+    if (cv.getType.getTypeId == DType.DTypeEnum.STRUCT &&
+        cv.getRowCount > 0 &&
+        cv.getNullCount == cv.getRowCount) {
+      return GpuColumnVector.columnVectorFromNull(cv.getRowCount.toInt, dt, true)
+    }
     ColumnCastUtil.deepTransform(cv, Some(dt)) {
       case (cv, _) if cv.getType.isTimestampType =>
         if(cv.getType == DType.TIMESTAMP_DAYS) {
