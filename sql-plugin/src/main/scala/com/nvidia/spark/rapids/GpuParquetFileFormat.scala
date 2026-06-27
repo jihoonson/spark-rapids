@@ -399,7 +399,7 @@ class GpuParquetWriter(
         cv.getNullCount == cv.getRowCount) {
       return GpuColumnVector.columnVectorFromNull(cv.getRowCount.toInt, dt, true)
     }
-    ColumnCastUtil.deepTransform(cv, Some(dt)) {
+    ColumnCastUtil.deepTransform(cv, Some(dt), useSchemaEvolutionCopy = true) {
       case (cv, _) if cv.getType.isTimestampType =>
         if(cv.getType == DType.TIMESTAMP_DAYS) {
           if (dateRebaseMode == DateTimeRebaseLegacy) {

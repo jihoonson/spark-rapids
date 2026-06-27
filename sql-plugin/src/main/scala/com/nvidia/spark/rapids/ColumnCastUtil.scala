@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * Copyright (c) 2021-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -178,14 +178,18 @@ object ColumnCastUtil {
    */
   def deepTransform(cv: ColumnVector, dt: Option[DataType] = None,
       nestedMismatchHandler: Option[(ColumnView, DataType) =>
-          (Option[ColumnView], Seq[AutoCloseable])] = None)
+          (Option[ColumnView], Seq[AutoCloseable])] = None,
+      useSchemaEvolutionCopy: Boolean = false)
       (convert: PartialFunction[(ColumnView, Option[DataType]), ColumnView]): ColumnVector = {
     val (retView, needsClosed) = deepTransformView(cv, dt, nestedMismatchHandler)(convert)
     withResource(needsClosed) { _ =>
       retView match {
         case Some(updated) =>
           // Don't need to close updated because it is covered by needsClosed
-          updated.copyToColumnVector()
+          // T0-B: use copyToColumnVectorForSchemaEvolution when requested to skip
+          // superimpose_and_sanitize_nulls in make_structs_column (safe: null mask already correct).
+          if (useSchemaEvolutionCopy) updated.copyToColumnVectorForSchemaEvolution()
+          else updated.copyToColumnVector()
         case None =>
           cv.incRefCount()
       }
