@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2019-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ import java.util.{Comparator, LinkedList, PriorityQueue}
 
 import scala.collection.mutable.ArrayBuffer
 
-import ai.rapids.cudf.{ColumnVector, ContiguousTable, Table}
+import ai.rapids.cudf.{ColumnVector, ContiguousTable, Scalar, Table}
 import com.nvidia.spark.rapids.Arm.{closeOnExcept, withResource}
 import com.nvidia.spark.rapids.GpuMetric._
 import com.nvidia.spark.rapids.RapidsPluginImplicits.AutoCloseableProducingSeq
@@ -219,12 +219,21 @@ object GpuSpillableProjectedSortEachBatchIterator {
     val sortedBatchIter = spillableIter.flatMap { scb =>
       withRetry(scb, splitSpillableInHalfByRows) { attemptScb =>
         opTime.ns {
-          val sortedTbl = withResource(attemptScb.getColumnarBatch()) { attemptCb =>
-            sorter.appendProjectedAndSort(attemptCb, sortTime)
-          }
-          withResource(sortedTbl) { _ =>
-            closeOnExcept(GpuColumnVector.from(sortedTbl, sorter.projectedBatchTypes)) { cb =>
-              SpillableColumnarBatch(cb, SpillPriorities.ACTIVE_ON_DECK_PRIORITY)
+          if (sorter.skipFirstPassSort) {
+            // Skip sort; store unsorted projected batch — merge pass will sort everything.
+            withResource(attemptScb.getColumnarBatch()) { attemptCb =>
+              closeOnExcept(sorter.appendProjectedColumns(attemptCb)) { projected =>
+                SpillableColumnarBatch(projected, SpillPriorities.ACTIVE_ON_DECK_PRIORITY)
+              }
+            }
+          } else {
+            val sortedTbl = withResource(attemptScb.getColumnarBatch()) { attemptCb =>
+              sorter.appendProjectedAndSort(attemptCb, sortTime)
+            }
+            withResource(sortedTbl) { _ =>
+              closeOnExcept(GpuColumnVector.from(sortedTbl, sorter.projectedBatchTypes)) { cb =>
+                SpillableColumnarBatch(cb, SpillPriorities.ACTIVE_ON_DECK_PRIORITY)
+              }
             }
           }
         }
@@ -311,7 +320,9 @@ case class GpuOutOfCoreSortIterator(
    */
   val alreadySortedIter = GpuSpillableProjectedSortEachBatchIterator(iter, sorter, opTime, sortTime)
 
-  private val cpuOrd = new LazilyGeneratedOrdering(sorter.cpuOrdering)
+  private val cpuOrd =
+    if (sorter.skipFirstPassSort) new LazilyGeneratedOrdering(sorter.keyOnlyCpuOrdering)
+    else new LazilyGeneratedOrdering(sorter.cpuOrdering)
   // A priority queue of data that is not merged yet.
   private val pending = new Pending(cpuOrd)
 
@@ -324,20 +335,29 @@ case class GpuOutOfCoreSortIterator(
 
   // Use types for the UnsafeProjection otherwise we need to have CPU BoundAttributeReferences
   // used for converting between columnar data and rows (to get the first row in each batch).
-  private lazy val unsafeProjection = UnsafeProjection.create(sorter.projectedBatchTypes)
-  // Used for converting between rows and columns when we have to put a cuttoff on the GPU
+  // When skipFirstPassSort, firstRow contains only key columns.
+  private lazy val unsafeProjection =
+    if (sorter.skipFirstPassSort) UnsafeProjection.create(sorter.keyOnlySchema.map(_.dataType).toArray)
+    else UnsafeProjection.create(sorter.projectedBatchTypes)
+  // Used for converting between rows and columns when we have to put a cutoff on the GPU
   // to know how much of the data after a merge sort is fully sorted.
-  private lazy val converters = new GpuRowToColumnConverter(
-    TrampolineUtil.fromAttributes(sorter.projectedBatchSchema))
+  private lazy val converters =
+    if (sorter.skipFirstPassSort)
+      new GpuRowToColumnConverter(TrampolineUtil.fromAttributes(sorter.keyOnlySchema))
+    else
+      new GpuRowToColumnConverter(TrampolineUtil.fromAttributes(sorter.projectedBatchSchema))
 
   /**
    * Convert the boundaries (first rows for each batch) into unsafe rows for use later on.
+   * When skipFirstPassSort, tab is a key-only table and unsafeProjection is key-only.
    */
   private def convertBoundaries(tab: Table): Array[UnsafeRow] = {
     import scala.collection.JavaConverters._
+    val types = if (sorter.skipFirstPassSort) sorter.keyOnlySchema.map(_.dataType).toArray
+                else sorter.projectedBatchTypes
     val cb = NvtxRegistry.SORT_COPY_BOUNDARIES {
       new ColumnarBatch(
-        GpuColumnVector.extractColumns(tab, sorter.projectedBatchTypes).map(_.copyToHost()),
+        GpuColumnVector.extractColumns(tab, types).map(_.copyToHost()),
         tab.getRowCount.toInt)
     }
     withResource(cb) { cb =>
@@ -345,6 +365,56 @@ case class GpuOutOfCoreSortIterator(
         cb.rowIterator().asScala.map(unsafeProjection).map(_.copy().asInstanceOf[UnsafeRow]).toArray
       }
     }
+  }
+
+  // Build a key-only Table from a full projected Table (no copy; columns are views).
+  private def extractKeyColumns(tbl: Table): Table =
+    new Table(sorter.keyColumnOrdinals.map(tbl.getColumn): _*)
+
+  // Compute a conservative key-only lower bound for an unsorted sub-batch.
+  // For each sort key: min of column (ASC) or max of column (DESC).
+  // Returns a key-only UnsafeRow.
+  private def computeKeyOnlyLowerBoundFromTable(splitTbl: Table): UnsafeRow = {
+    val keyScalars: Array[Scalar] = sorter.keyOnlyCpuOrdering.zipWithIndex.map { case (so, i) =>
+      val col = splitTbl.getColumn(sorter.keyColumnOrdinals(i))
+      if (so.isAscending) col.min() else col.max()
+    }.toArray
+    withResource(keyScalars) { _ =>
+      withResource(keyScalars.map(s => ColumnVector.fromScalar(s, 1))) { keyVecs =>
+        withResource(new Table(keyVecs: _*)) { keyTbl =>
+          convertBoundaries(keyTbl).head
+        }
+      }
+    }
+  }
+
+  // Split an unsorted projected table into sub-batches with conservative key-only lower bounds.
+  private def splitUnsortedTable(
+      projectedTbl: Table): (Option[SpillableColumnarBatch], Seq[OutOfCoreBatch]) = {
+    val targetBatchSize = targetSize / 8
+    val rows = projectedTbl.getRowCount.toInt
+    val memSize = GpuColumnVector.getTotalDeviceMemoryUsed(projectedTbl)
+    val averageRowSize = memSize.toDouble / rows
+    val targetRowCount = Math.max((targetBatchSize / averageRowSize).toInt, 1024)
+
+    val splitIndexes = (targetRowCount until rows by targetRowCount).toArray
+    val pendingObs: ArrayBuffer[OutOfCoreBatch] = ArrayBuffer.empty
+    closeOnExcept(pendingObs) { _ =>
+      withResource(projectedTbl.contiguousSplit(splitIndexes: _*)) { splits =>
+        splits.zipWithIndex.foreach { case (ct, idx) =>
+          val lb = computeKeyOnlyLowerBoundFromTable(ct.getTable)
+          splits(idx) = null  // transfer ownership
+          if (ct.getRowCount > 0) {
+            val sp = SpillableColumnarBatch(ct, sorter.projectedBatchTypes,
+              SpillPriorities.ACTIVE_ON_DECK_PRIORITY)
+            pendingObs += OutOfCoreBatch(sp, lb)
+          } else {
+            ct.close()
+          }
+        }
+      }
+    }
+    (None, pendingObs.toSeq)
   }
 
   /**
@@ -403,9 +473,15 @@ case class GpuOutOfCoreSortIterator(
       val lowerBoundaries =
         NvtxRegistry.SORT_LOWER_BOUNDARIES {
           withResource(ColumnVector.fromInts(lowerGatherIndexes: _*)) { gatherMap =>
-            withResource(sortedTbl.gather(gatherMap)) { boundariesTab =>
-              convertBoundaries(boundariesTab)
+            // When skipFirstPassSort, gather only key columns to produce key-only UnsafeRows.
+            val boundariesTab = if (sorter.skipFirstPassSort) {
+              withResource(extractKeyColumns(sortedTbl)) { keyTbl =>
+                keyTbl.gather(gatherMap)
+              }
+            } else {
+              sortedTbl.gather(gatherMap)
             }
+            withResource(boundariesTab)(convertBoundaries)
           }
         }
 
@@ -459,17 +535,36 @@ case class GpuOutOfCoreSortIterator(
     pendingObs.foreach(pending.add)
   }
 
+  // Split an unsorted first-pass batch into sub-batches with conservative lower bounds.
+  private final def splitOneUnsortedBatch(scb: SpillableColumnarBatch): Unit = {
+    NvtxIdWithMetrics(NvtxRegistry.SPLIT_INPUT_BATCH, opTime) {
+      val ret = withRetryNoSplit(scb) { attempt =>
+        onFirstPassSplit()
+        withResource(attempt.getColumnarBatch()) { cb =>
+          withResource(GpuColumnVector.from(cb)) { tbl =>
+            splitUnsortedTable(tbl)
+          }
+        }
+      }
+      saveSplitResult(ret)
+    }
+  }
+
   /**
    * Take a single sorted batch from the `alreadySortedIter`, split it up and store them for
    * merging.
    */
   private final def splitOneSortedBatch(scb: SpillableColumnarBatch): Unit = {
-    NvtxIdWithMetrics(NvtxRegistry.SPLIT_INPUT_BATCH, opTime) {
-      val ret = withRetryNoSplit(scb) { attempt =>
-        onFirstPassSplit()
-        splitAfterSort(attempt)
+    if (sorter.skipFirstPassSort) {
+      splitOneUnsortedBatch(scb)
+    } else {
+      NvtxIdWithMetrics(NvtxRegistry.SPLIT_INPUT_BATCH, opTime) {
+        val ret = withRetryNoSplit(scb) { attempt =>
+          onFirstPassSplit()
+          splitAfterSort(attempt)
+        }
+        saveSplitResult(ret)
       }
-      saveSplitResult(ret)
     }
   }
 
@@ -505,7 +600,20 @@ case class GpuOutOfCoreSortIterator(
         }
       }
 
-      val mergedSpillBatch = sorter.mergeSortAndCloseWithRetry(pendingSort, sortTime)
+      // When skipFirstPassSort and only one pending batch, sort it now (it was skipped in first pass)
+      val mergedSpillBatch = if (sorter.skipFirstPassSort && pendingSort.size == 1) {
+        RmmRapidsRetryIterator.withRetryNoSplit(pendingSort.pop()) { attempt =>
+          withResource(attempt.getColumnarBatch()) { cb =>
+            withResource(sorter.appendProjectedAndSort(cb, sortTime)) { sortedTbl =>
+              closeOnExcept(GpuColumnVector.from(sortedTbl, sorter.projectedBatchTypes)) { b =>
+                SpillableColumnarBatch(b, SpillPriorities.ACTIVE_ON_DECK_PRIORITY)
+              }
+            }
+          }
+        }
+      } else {
+        sorter.mergeSortAndCloseWithRetry(pendingSort, sortTime)
+      }
       val (retBatch, sortedOffset) = closeOnExcept(mergedSpillBatch) { _ =>
         // First we want figure out what is fully sorted from what is not
         val sortSplitOffset = if (pending.isEmpty) {
@@ -516,10 +624,27 @@ case class GpuOutOfCoreSortIterator(
           // so get the next "smallest" row that is pending.
           val cutoff = pending.peek().firstRow
           val result = RmmRapidsRetryIterator.withRetryNoSplit[ColumnVector] {
-            withResource(converters.convertBatch(Array(cutoff),
-              TrampolineUtil.fromAttributes(sorter.projectedBatchSchema))) { cutoffCb =>
-              withResource(mergedSpillBatch.getColumnarBatch()) { mergedBatch =>
-                sorter.upperBound(mergedBatch, cutoffCb)
+            if (sorter.skipFirstPassSort) {
+              // cutoff is a key-only UnsafeRow; use key-only converter and upperBound
+              val keyTypes = sorter.keyOnlySchema.map(_.dataType).toArray
+              withResource(converters.convertBatch(Array(cutoff),
+                  TrampolineUtil.fromAttributes(sorter.keyOnlySchema))) { cutoffCb =>
+                withResource(mergedSpillBatch.getColumnarBatch()) { mergedBatch =>
+                  withResource(GpuColumnVector.from(mergedBatch)) { mergedTbl =>
+                    withResource(extractKeyColumns(mergedTbl)) { keyTbl =>
+                      withResource(GpuColumnVector.from(keyTbl, keyTypes)) { keyBatch =>
+                        sorter.keyOnlyUpperBound(keyBatch, cutoffCb)
+                      }
+                    }
+                  }
+                }
+              }
+            } else {
+              withResource(converters.convertBatch(Array(cutoff),
+                TrampolineUtil.fromAttributes(sorter.projectedBatchSchema))) { cutoffCb =>
+                withResource(mergedSpillBatch.getColumnarBatch()) { mergedBatch =>
+                  sorter.upperBound(mergedBatch, cutoffCb)
+                }
               }
             }
           }
@@ -617,7 +742,15 @@ case class GpuOutOfCoreSortIterator(
       if (pending.isEmpty && sorted.isEmpty) {
         closeOnExcept(alreadySortedIter.next()) { scb =>
           if (!alreadySortedIter.hasNext) {
-            sorted.add(scb)
+            if (sorter.skipFirstPassSort) {
+              // Single batch, unsorted — sort it now before placing in sorted queue.
+              val sortedBatch = sorter.fullySortBatchAndCloseWithRetry(scb, sortTime, opTime)
+              closeOnExcept(sortedBatch) { b =>
+                sorted.add(SpillableColumnarBatch(b, SpillPriorities.ACTIVE_ON_DECK_PRIORITY))
+              }
+            } else {
+              sorted.add(scb)
+            }
           } else {
             firstPassReadBatches(scb)
           }
