@@ -389,6 +389,15 @@ class GpuParquetWriter(
     }
   }
 
+  private def needsDeepTransform(dt: DataType): Boolean = dt match {
+    case TimestampType | DateType => true
+    case _: DecimalType => true
+    case s: StructType => s.fields.exists(f => needsDeepTransform(f.dataType))
+    case a: ArrayType => needsDeepTransform(a.elementType)
+    case m: MapType => needsDeepTransform(m.keyType) || needsDeepTransform(m.valueType)
+    case _ => false
+  }
+
   private def deepTransformColumn(cv: ColumnVector, dt: DataType): ColumnVector = {
     // T0-A: all-null struct fast path — skip the recursive deepTransform and
     // return a zero-copy all-null column with the evolved schema directly.
@@ -397,7 +406,16 @@ class GpuParquetWriter(
     if (cv.getType.getTypeId == DType.DTypeEnum.STRUCT &&
         cv.getRowCount > 0 &&
         cv.getNullCount == cv.getRowCount) {
-      return GpuColumnVector.columnVectorFromNull(cv.getRowCount.toInt, dt, true)
+      // Bypass Scalar.structFromNull (which builds every field on the host then copies to device).
+      // Use cv directly as the type exemplar — schema evolution is applied before this point so
+      // cv already has the target schema. make_all_null_column_like creates the all-null column
+      // entirely on GPU via GPU allocations with no host round-trips.
+      return ColumnVector.makeAllNullColumnLike(cv, cv.getRowCount.toInt)
+    }
+    // Skip deep traversal entirely when no leaf in the type tree needs ts/decimal transform.
+    // When the partial function never matches, deepTransform returns cv.incRefCount() anyway.
+    if (!needsDeepTransform(dt)) {
+      return cv.incRefCount()
     }
     ColumnCastUtil.deepTransform(cv, Some(dt), useSchemaEvolutionCopy = true) {
       case (cv, _) if cv.getType.isTimestampType =>

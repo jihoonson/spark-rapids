@@ -98,8 +98,14 @@ object ColumnCastUtil {
                     } else {
                       None
                     }
-                    val (updatedChild, needsClosingChild) = deepTransformView(child, childDt,
-                      nestedMismatchHandler)(convert)
+                    val (updatedChild, needsClosingChild) =
+                      if (child.getType.getTypeId == DType.DTypeEnum.STRUCT &&
+                          child.getRowCount > 0 &&
+                          child.getNullCount == child.getRowCount) {
+                        (None, Seq.empty[AutoCloseable])
+                      } else {
+                        deepTransformView(child, childDt, nestedMismatchHandler)(convert)
+                      }
                     needsClosing ++= needsClosingChild
                     updatedChild match {
                       case Some(newChild) =>
