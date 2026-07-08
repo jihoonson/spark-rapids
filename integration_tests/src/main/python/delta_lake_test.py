@@ -963,7 +963,7 @@ def test_delta_dv_cpu_filter_after_native_scan(spark_tmp_path):
     _test_delta_dv_filter_after_native_scan(spark_tmp_path, cpu_bridge_enabled=False)
 
 
-@allow_non_gpu("In", "InSet", "ColumnarToRowExec", *_delta_meta_allow_without_filter)
+@allow_non_gpu("FilterExec", "In", "InSet", "ColumnarToRowExec", *delta_meta_allow)
 @delta_lake
 @ignore_order(local=True)
 @pytest.mark.skipif(not supports_delta_lake_deletion_vectors(),
