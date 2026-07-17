@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * Copyright (c) 2019-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -217,7 +217,7 @@ class GpuSorter(
     }
   }
 
-  private[this] lazy val hasNestedInKeyColumns = cpuOrderingInternal.exists { order =>
+  private lazy val hasNestedInKeyColumns = cpuOrderingInternal.exists { order =>
     order.child.dataType match {
       case _: BinaryType =>
         // binary is represented in cudf as a LIST column of UINT8
@@ -227,12 +227,49 @@ class GpuSorter(
   }
 
   /** (This can be removed once https://github.com/rapidsai/cudf/issues/8050 is addressed) */
-  private[this] lazy val hasUnsupportedNestedInRideColumns = {
+  private lazy val hasUnsupportedNestedInRideColumns = {
     val keyColumnIndices = cpuOrderingInternal.map(_.child.asInstanceOf[BoundReference].ordinal)
     val rideColumnIndices = projectedBatchTypes.indices.toSet -- keyColumnIndices
     rideColumnIndices.exists { idx =>
       TrampolineUtil.dataTypeExistsRecursively(projectedBatchTypes(idx),
         t => t.isInstanceOf[ArrayType] || t.isInstanceOf[MapType] || t.isInstanceOf[BinaryType])
+    }
+  }
+
+  // When true, skip the per-batch full sort in the first pass of GpuOutOfCoreSortIterator.
+  // Sub-batches are stored unsorted; the merge's concat+orderBy fallback handles final ordering.
+  lazy val skipFirstPassSort: Boolean = hasUnsupportedNestedInRideColumns && !hasNestedInKeyColumns
+
+  // Column ordinals within the projected batch schema for each sort key, in cudfOrdering order.
+  lazy val keyColumnOrdinals: Array[Int] =
+    cpuOrderingInternal.map(_.child.asInstanceOf[BoundReference].ordinal)
+
+  // Schema containing only sort-key attributes, in cudfOrdering order.
+  lazy val keyOnlySchema: Seq[Attribute] =
+    keyColumnOrdinals.map(projectedBatchSchema(_))
+
+  // cudfOrdering re-indexed 0, 1, ... for a key-only table.
+  lazy val keyOnlyCudfOrdering: Array[OrderByArg] =
+    cpuOrderingInternal.zipWithIndex.map { case (so, i) =>
+      SortUtils.getOrder(so, i)
+    }.toArray
+
+  // cpuOrdering re-indexed for a key-only schema.
+  lazy val keyOnlyCpuOrdering: Seq[SortOrder] =
+    cpuOrderingInternal.zipWithIndex.map { case (so, i) =>
+      SortOrder(BoundReference(i, so.child.dataType, so.child.nullable),
+        so.direction, so.nullOrdering, Seq.empty)
+    }
+
+  /**
+   * upperBound using key-only schema and ordering.
+   * Both findIn and find must be key-only ColumnarBatches (columns in keyColumnOrdinals order).
+   */
+  def keyOnlyUpperBound(keyFindIn: ColumnarBatch, keyFind: ColumnarBatch): ColumnVector = {
+    withResource(GpuColumnVector.from(keyFindIn)) { findInTbl =>
+      withResource(GpuColumnVector.from(keyFind)) { findTbl =>
+        findInTbl.upperBound(findTbl, keyOnlyCudfOrdering: _*)
+      }
     }
   }
 
