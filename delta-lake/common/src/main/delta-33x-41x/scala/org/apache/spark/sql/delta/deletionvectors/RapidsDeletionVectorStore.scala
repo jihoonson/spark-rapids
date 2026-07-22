@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.deletionvectors
 
 import ai.rapids.cudf.HostMemoryBuffer
 import com.nvidia.spark.rapids.Arm.{closeOnExcept, withResource}
+import com.nvidia.spark.rapids.ByteBufferInputStream
 import com.nvidia.spark.rapids.fileio.hadoop.HadoopFileIO
 import com.nvidia.spark.rapids.jni.Hash
 import com.nvidia.spark.rapids.jni.fileio.RapidsFileIO
@@ -67,15 +68,33 @@ class RapidsHadoopDVStore(fileIO: HadoopFileIO) extends RapidsDeletionVectorStor
 }
 
 /**
+ * Loads inline deletion vectors.
+ */
+private[deletionvectors] object RapidsInMemoryDeletionVectorStore {
+  def load(bytes: Array[Byte]): HostMemoryBuffer = {
+    DeltaSerializedBitmapLoader.loadFromBytes(bytes)
+  }
+}
+
+/**
  * Trait for the "Delta" roaring bitmap serialization format loaders. Delta supports two
  * serialization formats for roaring bitmaps: "portable" and "native".
  * See [[RoaringBitmapArraySerializationFormat]] for details.
  */
-sealed trait DeltaSerializedBitmapLoader {
+private sealed trait DeltaSerializedBitmapLoader {
+  /**
+   * Loads a bitmap payload and validates its trailing checksum. The CRC is initialized
+   * with the magic number before this method is called.
+   */
   def loadAsStandardFormat(input: DataInputStream, size: Int, crc: CRC32): HostMemoryBuffer
+
+  /**
+   * Loads an inline bitmap payload without CRC validation.
+   */
+  def loadAsStandardFormat(input: DataInputStream, size: Int): HostMemoryBuffer
 }
 
-object DeltaSerializedBitmapLoader {
+private object DeltaSerializedBitmapLoader {
 
   // scalastyle:off line.size.limit
   /**
@@ -114,50 +133,86 @@ object DeltaSerializedBitmapLoader {
 
     val remainingSize = size - DELTA_BITMAP_MAGIC_NUMBER_BYTE_SIZE
 
+    getFormatLoader(magicNumber).loadAsStandardFormat(input, remainingSize, crc)
+  }
+
+  def loadFromBytes(bytes: Array[Byte]): HostMemoryBuffer = {
+    val bb = ByteBuffer.wrap(bytes)
+    bb.order(ByteOrder.LITTLE_ENDIAN)
+    val magicNumber = bb.getInt()
+    val remainingSize = bb.remaining()
+    withResource(new ByteBufferInputStream(bb)) { bais =>
+      withResource(new DataInputStream(bais)) { in =>
+        getFormatLoader(magicNumber).loadAsStandardFormat(in, remainingSize)
+      }
+    }
+  }
+
+  private def getFormatLoader(magicNumber: Int): DeltaSerializedBitmapLoader = {
     magicNumber match {
       case PortableRoaringBitmapArraySerializationFormat.MAGIC_NUMBER =>
-        DeltaPortableFormatLoader.loadAsStandardFormat(input, remainingSize, crc)
+        DeltaPortableFormatLoader
       case NativeRoaringBitmapArraySerializationFormat.MAGIC_NUMBER =>
-        DeltaNativeFormatLoader.loadAsStandardFormat(input, remainingSize, crc)
+        DeltaNativeFormatLoader
       case _ =>
         throw new IOException(s"Unexpected RoaringBitmapArray magic number $magicNumber")
     }
   }
 }
 
-object DeltaPortableFormatLoader extends DeltaSerializedBitmapLoader {
+private object DeltaPortableFormatLoader extends DeltaSerializedBitmapLoader {
 
   override def loadAsStandardFormat(input: DataInputStream, size: Int, crc: CRC32)
-  : HostMemoryBuffer = {
+  : HostMemoryBuffer = loadAsStandardFormatImpl(input, size, Some(crc))
+
+  override def loadAsStandardFormat(input: DataInputStream, size: Int): HostMemoryBuffer = {
+    loadAsStandardFormatImpl(input, size, None)
+  }
+
+  private def loadAsStandardFormatImpl(
+      input: DataInputStream,
+      size: Int,
+      crcOpt: Option[CRC32]): HostMemoryBuffer = {
     // The Delta portable format is identical to the standard portable format except for the
     // magic number at the beginning, which is already stripped at this point. Therefore,
     // we can directly load the remaining bytes into a HostMemoryBuffer and return it.
     closeOnExcept(HostMemoryBuffer.allocate(size)) { buffer =>
       buffer.copyFromStream(0, input, size)
 
-      val expectedChecksum = input.readInt()
-      val prevCrc = crc.getValue
-      // Should cast the computed checksum to an int since the expected checksum is an int.
-      val actualChecksum = Hash.hostCrc32(prevCrc, buffer).toInt
-      if (expectedChecksum != actualChecksum) {
-        throw DeltaErrors.deletionVectorChecksumMismatch()
+      crcOpt.foreach { crc =>
+        val expectedChecksum = input.readInt()
+        val prevCrc = crc.getValue
+        // Should cast the computed checksum to an int since the expected checksum is an int.
+        val actualChecksum = Hash.hostCrc32(prevCrc, buffer).toInt
+        if (expectedChecksum != actualChecksum) {
+          throw DeltaErrors.deletionVectorChecksumMismatch()
+        }
       }
       buffer
     }
   }
 }
 
-object DeltaNativeFormatLoader extends DeltaSerializedBitmapLoader {
+private object DeltaNativeFormatLoader extends DeltaSerializedBitmapLoader {
 
   override def loadAsStandardFormat(input: DataInputStream, size: Int, crc: CRC32)
-  : HostMemoryBuffer = {
+  : HostMemoryBuffer = loadAsStandardFormatImpl(input, size, Some(crc))
+
+  override def loadAsStandardFormat(input: DataInputStream, size: Int): HostMemoryBuffer = {
+    loadAsStandardFormatImpl(input, size, None)
+  }
+
+  private def loadAsStandardFormatImpl(
+      input: DataInputStream,
+      size: Int,
+      crcOpt: Option[CRC32]): HostMemoryBuffer = {
     // The Delta native format is not compatible with the standard portable format, so we
     // load the bitmap into a RoaringBitmapArray first, then re-serialize it in the standard
     // portable format. This is sub-optimal since it requires deserializing and re-serializing
     // the bitmap, but this is the simplest that works for the legacy native format which
     // is expected to be rare. If this becomes a problem, we can consider implementing a more
     // efficient conversion without fully deserializing the bitmap.
-    val originalBytes = readRangeFromStream(input, size, crc)
+    val originalBytes = readRangeFromStream(input, size, crcOpt)
     val bb = ByteBuffer.wrap(originalBytes)
     bb.order(ByteOrder.LITTLE_ENDIAN)
     val roaringBitmapArray = NativeRoaringBitmapArraySerializationFormat.deserialize(bb)
@@ -175,17 +230,22 @@ object DeltaNativeFormatLoader extends DeltaSerializedBitmapLoader {
    * This version does not read the bitmap size from the stream since that is already read
    * by the caller ([[DeltaSerializedBitmapLoader.load]]).
    */
-  private def readRangeFromStream(reader: DataInputStream, size: Int, crc: CRC32): Array[Byte] = {
+  private def readRangeFromStream(
+      reader: DataInputStream,
+      size: Int,
+      crcOpt: Option[CRC32]): Array[Byte] = {
     val buffer = new Array[Byte](size)
     reader.readFully(buffer)
 
-    val expectedChecksum = reader.readInt()
-    crc.update(buffer)
-    // Should cast the computed checksum to an int since the expected checksum is an int.
-    val actualChecksum = crc.getValue.toInt
+    crcOpt.foreach { crc =>
+      val expectedChecksum = reader.readInt()
+      crc.update(buffer)
+      // Should cast the computed checksum to an int since the expected checksum is an int.
+      val actualChecksum = crc.getValue.toInt
 
-    if (expectedChecksum != actualChecksum) {
-      throw DeltaErrors.deletionVectorChecksumMismatch()
+      if (expectedChecksum != actualChecksum) {
+        throw DeltaErrors.deletionVectorChecksumMismatch()
+      }
     }
 
     buffer
