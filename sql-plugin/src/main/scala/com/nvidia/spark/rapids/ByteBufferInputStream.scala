@@ -71,7 +71,7 @@ class ByteBufferInputStream(private var buffer: ByteBuffer)
   }
 
   /**
-   * Clean up the buffer, and potentially dispose of it using StorageUtils.dispose().
+   * Clean up the buffer.
    */
   private def cleanUp(): Unit = {
     if (buffer != null) {
