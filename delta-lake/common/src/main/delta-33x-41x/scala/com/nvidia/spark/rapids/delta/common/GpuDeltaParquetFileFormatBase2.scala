@@ -757,6 +757,7 @@ class GpuDeltaParquetFileFormatBase2(
      * Deletion vector metadata for a single host memory buffer containing a part of data.
      */
     private case class SingleBufferDVMetadata(
+        // maybeDvInfo is None only when the tablePath is not defined.
         maybeDvInfo: Option[SpillableDeletionVectorInfo]
     )
 

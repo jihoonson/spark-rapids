@@ -593,6 +593,67 @@ def test_delta_deletion_vector_multithreaded_combine_count_star(
 
 @allow_non_gpu("FileSourceScanExec", "ColumnarToRowExec", *delta_meta_allow)
 @delta_lake
+@pytest.mark.skipif(not supports_delta_lake_deletion_vectors(),
+                    reason="Delta Lake deletion vector support is required")
+@pytest.mark.skipif(is_databricks_runtime(),
+                    reason="This test targets the OSS multithreaded Delta reader")
+def test_delta_deletion_vector_multithreaded_combine_count_star_mixed_dv_no_dv(
+        spark_tmp_path):
+    """
+    Verifies COUNT(*) for one combined batch containing a DV file and a non-DV file.
+    The DV file has 5 alive rows and the non-DV file has 20, so the result must be 25.
+    """
+    data_path = spark_tmp_path + "/DELTA_DATA"
+    conf = {
+        "spark.databricks.delta.delete.deletionVectors.persistent": "true",
+        "spark.databricks.delta.optimizeMetadataQuery.enabled": "false",
+        "spark.rapids.sql.delta.deletionVectors.predicatePushdown.enabled": "true",
+        "spark.rapids.sql.format.parquet.reader.type": "MULTITHREADED",
+        "spark.rapids.sql.reader.multithreaded.combine.sizeBytes": "1M",
+        "spark.sql.files.maxPartitionBytes": "1G",
+        "spark.sql.files.openCostInBytes": "1",
+        "spark.sql.files.minPartitionNum": "1",
+    }
+
+    def setup_tables(spark):
+        setup_delta_dest_table(
+            spark,
+            data_path,
+            dest_table_func=lambda spark: spark.range(0, 10, 1, 1)
+                .selectExpr("CAST(id AS INT) AS a"),
+            use_cdf=False,
+            enable_deletion_vectors=True)
+
+        delete_count = spark.sql(
+            f"DELETE FROM delta.`{data_path}` WHERE a < 5").collect()[0][0]
+        assert delete_count == 5
+        delete_metrics = _latest_delta_history(spark, data_path)["operationMetrics"]
+        assert int(delete_metrics.get("numDeletionVectorsAdded", "0")) == 1
+
+        spark.range(10, 30, 1, 1) \
+            .selectExpr("CAST(id AS INT) AS a") \
+            .write.format("delta").mode("append").save(data_path)
+        active_files = spark.read.format("delta").load(data_path).inputFiles()
+        assert len(active_files) == 2, \
+            f"Expected one DV file and one non-DV file, got {active_files}"
+
+    with_cpu_session(setup_tables, conf=conf)
+
+    num_partitions = with_gpu_session(
+        lambda spark: spark.read.format("delta").load(data_path)
+            .select("a").rdd.getNumPartitions(),
+        conf=conf)
+    assert num_partitions == 1, \
+        f"Expected both files in one FilePartition, got {num_partitions}"
+
+    assert_cpu_and_gpu_are_equal_collect_with_capture(
+        lambda spark: spark.sql(f"SELECT count(*) FROM delta.`{data_path}`"),
+        exist_classes=r"Gpu(FileSourceScanExec|FileGpuScan).*ReadSchema: struct<>",
+        conf=conf)
+
+
+@allow_non_gpu("FileSourceScanExec", "ColumnarToRowExec", *delta_meta_allow)
+@delta_lake
 @ignore_order(local=True)
 @pytest.mark.parametrize("dv_predicate_pushdown", [True, False], ids=idfn)
 @pytest.mark.parametrize("use_metadata_row_index", [True, False], ids=idfn)
