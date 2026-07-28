@@ -321,7 +321,8 @@ case class GpuDeltaParquetFileFormatNativeDV(
             val (rowGroupOffsets, rowGroupNumRows) =
               RapidsDeletionVectors.getRowGroupMetadata(chunkedBlocks)
             val maybeDvInfo = maybeSerializedDV.map(serializedDV =>
-              new DeletionVector.DeletionVectorInfo(serializedDV, false, rowGroupOffsets, rowGroupNumRows))
+              new DeletionVector.DeletionVectorInfo(serializedDV,
+                false, rowGroupOffsets, rowGroupNumRows))
 
             val hostBuf = dataBuffer.getDataHostBuffer()
             // Duplicate request is ok, and start to use the GPU just after the host
@@ -1351,7 +1352,8 @@ case class GpuDeltaParquetFileFormatNativeDV(
           .zip(batchExtra.perFileEntries)
           .map { case (loaded, entry) =>
             new DeletionVector.DeletionVectorInfo(
-              loaded.gpuBitmap.getDataHostBuffer(), false, entry.rowGroupOffsets, entry.rowGroupNumRows)
+              loaded.gpuBitmap.getDataHostBuffer(),
+              false, entry.rowGroupOffsets, entry.rowGroupNumRows)
           }.toArray
         // MakeParquetTableWithDVProducer closes the dataBuffer and the bitmaps in dvInfos.
         MakeParquetTableWithDVProducer(useChunkedReader, maxChunkedReaderMemoryUsageSizeBytes,
