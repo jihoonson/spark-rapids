@@ -83,15 +83,14 @@ private[deletionvectors] object RapidsInMemoryDeletionVectorStore {
  */
 private sealed trait DeltaSerializedBitmapLoader {
   /**
-   * Loads a bitmap payload and validates its trailing checksum. The CRC is initialized
-   * with the magic number before this method is called.
+   * Loads a bitmap payload and validates its trailing checksum. CRC validation is performed
+   * when the `crc` parameter is provided. The bitmap is then converted to the "standard" roaring
+   * bitmap serialization format, and returned as a HostMemoryBuffer.
    */
-  def loadAsStandardFormat(input: DataInputStream, size: Int, crc: CRC32): HostMemoryBuffer
-
-  /**
-   * Loads an inline bitmap payload without CRC validation.
-   */
-  def loadAsStandardFormat(input: DataInputStream, size: Int): HostMemoryBuffer
+  def loadAsStandardFormat(
+    input: DataInputStream,
+    size: Int,
+    crcOpt: Option[CRC32]): HostMemoryBuffer
 }
 
 private object DeltaSerializedBitmapLoader {
@@ -133,18 +132,15 @@ private object DeltaSerializedBitmapLoader {
 
     val remainingSize = size - DELTA_BITMAP_MAGIC_NUMBER_BYTE_SIZE
 
-    getFormatLoader(magicNumber).loadAsStandardFormat(input, remainingSize, crc)
+    getFormatLoader(magicNumber).loadAsStandardFormat(input, remainingSize, Some(crc))
   }
 
   def loadFromBytes(bytes: Array[Byte]): HostMemoryBuffer = {
-    val bb = ByteBuffer.wrap(bytes)
-    bb.order(ByteOrder.LITTLE_ENDIAN)
+    val bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
     val magicNumber = bb.getInt()
     val remainingSize = bb.remaining()
-    withResource(new ByteBufferInputStream(bb)) { bais =>
-      withResource(new DataInputStream(bais)) { in =>
-        getFormatLoader(magicNumber).loadAsStandardFormat(in, remainingSize)
-      }
+    withResource(new DataInputStream(new ByteBufferInputStream(bb))) { in =>
+      getFormatLoader(magicNumber).loadAsStandardFormat(in, remainingSize, None)
     }
   }
 
@@ -162,17 +158,10 @@ private object DeltaSerializedBitmapLoader {
 
 private object DeltaPortableFormatLoader extends DeltaSerializedBitmapLoader {
 
-  override def loadAsStandardFormat(input: DataInputStream, size: Int, crc: CRC32)
-  : HostMemoryBuffer = loadAsStandardFormatImpl(input, size, Some(crc))
-
-  override def loadAsStandardFormat(input: DataInputStream, size: Int): HostMemoryBuffer = {
-    loadAsStandardFormatImpl(input, size, None)
-  }
-
-  private def loadAsStandardFormatImpl(
-      input: DataInputStream,
-      size: Int,
-      crcOpt: Option[CRC32]): HostMemoryBuffer = {
+  override def loadAsStandardFormat(
+    input: DataInputStream,
+    size: Int,
+    crcOpt: Option[CRC32]): HostMemoryBuffer = {
     // The Delta portable format is identical to the standard portable format except for the
     // magic number at the beginning, which is already stripped at this point. Therefore,
     // we can directly load the remaining bytes into a HostMemoryBuffer and return it.
@@ -195,14 +184,7 @@ private object DeltaPortableFormatLoader extends DeltaSerializedBitmapLoader {
 
 private object DeltaNativeFormatLoader extends DeltaSerializedBitmapLoader {
 
-  override def loadAsStandardFormat(input: DataInputStream, size: Int, crc: CRC32)
-  : HostMemoryBuffer = loadAsStandardFormatImpl(input, size, Some(crc))
-
-  override def loadAsStandardFormat(input: DataInputStream, size: Int): HostMemoryBuffer = {
-    loadAsStandardFormatImpl(input, size, None)
-  }
-
-  private def loadAsStandardFormatImpl(
+  override def loadAsStandardFormat(
       input: DataInputStream,
       size: Int,
       crcOpt: Option[CRC32]): HostMemoryBuffer = {

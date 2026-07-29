@@ -28,7 +28,7 @@ class ByteBufferInputStream(private var buffer: ByteBuffer)
     extends InputStream {
 
   override def read(): Int = {
-    if (buffer == null || buffer.remaining() == 0) {
+    if (buffer == null || !buffer.hasRemaining()) {
       cleanUp()
       -1
     } else {
@@ -47,7 +47,7 @@ class ByteBufferInputStream(private var buffer: ByteBuffer)
       throw new IndexOutOfBoundsException
     } else if (length == 0) {
       0
-    } else if (buffer == null || buffer.remaining() == 0) {
+    } else if (buffer == null || !buffer.hasRemaining()) {
       cleanUp()
       -1
     } else {
@@ -61,7 +61,7 @@ class ByteBufferInputStream(private var buffer: ByteBuffer)
     if (buffer != null && bytes > 0) {
       val amountToSkip = math.min(bytes, buffer.remaining().toLong).toInt
       buffer.position(buffer.position() + amountToSkip)
-      if (buffer.remaining() == 0) {
+      if (!buffer.hasRemaining()) {
         cleanUp()
       }
       amountToSkip

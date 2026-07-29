@@ -38,6 +38,21 @@ import org.apache.spark.sql.delta.storage.dv.HadoopFileSystemDVStore
 import org.apache.spark.sql.sources._
 
 object RapidsDeletionVectors extends Logging {
+  private def dvDescAndFilterType(
+      dvDescriptorOpt: Option[String],
+      filterTypeOpt: Option[RowIndexFilterType])
+  : Option[(DeletionVectorDescriptor, RowIndexFilterType)] = {
+    (dvDescriptorOpt, filterTypeOpt) match {
+      case (Some(dvDescriptor), Some(filterType)) =>
+        Some((DeletionVectorDescriptor.deserializeFromBase64(dvDescriptor), filterType))
+      case (None, None) =>
+        None
+      case (Some(_), None) | (None, Some(_)) =>
+        throw new IllegalStateException(
+          "Both dvDescriptorOpt and filterTypeOpt must be defined together or both absent.")
+    }
+  }
+
   /**
    * Translates the filter to use physical column names instead of logical column names.
    * This is needed when the column mapping mode is set to `NameMapping` or `IdMapping`
@@ -111,26 +126,22 @@ object RapidsDeletionVectors extends Logging {
       dvDescriptorOpt: Option[String],
       filterTypeOpt: Option[RowIndexFilterType],
       tablePath: String): HostMemoryBuffer = {
-    if (dvDescriptorOpt.isDefined && filterTypeOpt.isDefined) {
-      val dvDesc = DeletionVectorDescriptor.deserializeFromBase64(dvDescriptorOpt.get)
-
-      // The bitmap represents marked row indexes. The filter type determines whether those
-      // rows are removed or retained.
-      // See [[RowIndexFilterType]] for more details.
-      filterTypeOpt.get match {
-        case RowIndexFilterType.IF_CONTAINED | RowIndexFilterType.IF_NOT_CONTAINED =>
-          val storedBitmap = RapidsDeletionVectorStoredBitmap(dvDesc, new Path(tablePath))
-          storedBitmap.load(fileIO)
-        case unexpectedFilterType => throw new IllegalStateException(
-          s"Unexpected row index filter type for Deletion Vectors. " +
-            s"Expected: ${RowIndexFilterType.IF_CONTAINED} or " +
-            s"${RowIndexFilterType.IF_NOT_CONTAINED}; Actual: ${unexpectedFilterType}")
-      }
-    } else if (dvDescriptorOpt.isDefined || filterTypeOpt.isDefined) {
-      throw new IllegalStateException(
-        "Both dvDescriptorOpt and filterTypeOpt must be defined together or both absent.")
-    } else {
-      RapidsDeletionVectorStoredBitmap.serializedEmptyBitmap()
+    dvDescAndFilterType(dvDescriptorOpt, filterTypeOpt) match {
+      case Some((dvDesc, filterType)) =>
+        // The bitmap represents marked row indexes. The filter type determines whether those
+        // rows are removed or retained.
+        // See [[RowIndexFilterType]] for more details.
+        filterType match {
+          case RowIndexFilterType.IF_CONTAINED | RowIndexFilterType.IF_NOT_CONTAINED =>
+            val storedBitmap = RapidsDeletionVectorStoredBitmap(dvDesc, new Path(tablePath))
+            storedBitmap.load(fileIO)
+          case unexpectedFilterType => throw new IllegalStateException(
+            s"Unexpected row index filter type for Deletion Vectors. " +
+              s"Expected: ${RowIndexFilterType.IF_CONTAINED} or " +
+              s"${RowIndexFilterType.IF_NOT_CONTAINED}; Actual: ${unexpectedFilterType}")
+        }
+      case None =>
+        RapidsDeletionVectorStoredBitmap.serializedEmptyBitmap()
     }
   }
 
@@ -151,26 +162,22 @@ object RapidsDeletionVectors extends Logging {
       dvDescriptorOpt: Option[String],
       filterTypeOpt: Option[RowIndexFilterType],
       tablePath: String): RoaringBitmapArray = {
-    if (dvDescriptorOpt.isDefined && filterTypeOpt.isDefined) {
-      val dvDesc = DeletionVectorDescriptor.deserializeFromBase64(dvDescriptorOpt.get)
-
-      // The bitmap represents marked row indexes. The filter type determines whether those
-      // rows are removed or retained.
-      // See [[RowIndexFilterType]] for more details.
-      filterTypeOpt.get match {
-        case RowIndexFilterType.IF_CONTAINED | RowIndexFilterType.IF_NOT_CONTAINED =>
-          val dvStore = new HadoopFileSystemDVStore(conf)
-          StoredBitmap.create(dvDesc, new Path(tablePath)).load(dvStore)
-        case unexpectedFilterType => throw new IllegalStateException(
-          s"Unexpected row index filter type for Deletion Vectors. " +
-            s"Expected: ${RowIndexFilterType.IF_CONTAINED} or " +
-            s"${RowIndexFilterType.IF_NOT_CONTAINED}; Actual: ${unexpectedFilterType}")
-      }
-    } else if (dvDescriptorOpt.isDefined || filterTypeOpt.isDefined) {
-      throw new IllegalStateException(
-        "Both dvDescriptorOpt and filterTypeOpt must be defined together or both absent.")
-    } else {
-      new RoaringBitmapArray()
+    dvDescAndFilterType(dvDescriptorOpt, filterTypeOpt) match {
+      case Some((dvDesc, filterType)) =>
+        // The bitmap represents marked row indexes. The filter type determines whether those
+        // rows are removed or retained.
+        // See [[RowIndexFilterType]] for more details.
+        filterType match {
+          case RowIndexFilterType.IF_CONTAINED | RowIndexFilterType.IF_NOT_CONTAINED =>
+            val dvStore = new HadoopFileSystemDVStore(conf)
+            StoredBitmap.create(dvDesc, new Path(tablePath)).load(dvStore)
+          case unexpectedFilterType => throw new IllegalStateException(
+            s"Unexpected row index filter type for Deletion Vectors. " +
+              s"Expected: ${RowIndexFilterType.IF_CONTAINED} or " +
+              s"${RowIndexFilterType.IF_NOT_CONTAINED}; Actual: ${unexpectedFilterType}")
+        }
+      case None =>
+        new RoaringBitmapArray()
     }
   }
 
