@@ -16,7 +16,6 @@
 
 package com.nvidia.spark.rapids.delta
 
-import com.databricks.sql.io.RowIndexFilterType
 import com.databricks.sql.transaction.tahoe.{
   DeltaColumnMapping,
   DeltaColumnMappingMode,
@@ -215,17 +214,13 @@ object GpuDeltaParquetFileFormat {
     }
     if (hasUnsupportedRowIndexFiltersInTahoeFileIndex(meta.wrapped.relation)) {
       meta.willNotWorkOnGpu(
-        "DB-17.3 native deletion vector reads on GPU support only IF_CONTAINED " +
-          "row-index filters")
+        "DB-17.3 native deletion vector reads on GPU found an unsupported " +
+          "row-index filter type")
     }
     if (isDeletionVectorRead(format) ||
         hasDeletionVectorSkipRowColumn ||
         isGpuDvFilterScan ||
         hasRowIndexFilters) {
-      if (format.isCDCRead) {
-        meta.willNotWorkOnGpu(
-          "CDC reads with deletion vectors are not yet supported on GPU for DB-17.3")
-      }
       if (!DeltaSpark400DB173Provider.isPushDVPredicateDownEnabled(meta.conf)) {
         meta.willNotWorkOnGpu(
           "DB-17.3 deletion vector reads on GPU require native cuDF deletion-vector " +
@@ -284,7 +279,8 @@ object GpuDeltaParquetFileFormat {
     relation.location match {
       case tahoeFileIndex: TahoeFileIndex =>
         val hasUnsupportedCachedFilter = tahoeFileIndex.rowIndexFilters.exists { filters =>
-          filters.values.exists(_.getRowIndexFilterType != RowIndexFilterType.IF_CONTAINED)
+          filters.values.exists(filter =>
+            !RapidsDeletionVectors.isSupportedRowIndexFilterType(filter.getRowIndexFilterType))
         }
         hasUnsupportedCachedFilter || tahoeFileIndex.matchingFiles(
           Seq(TrueLiteral), Seq(TrueLiteral)).exists { addFile =>
@@ -295,9 +291,8 @@ object GpuDeltaParquetFileFormat {
                 if RapidsDeletionVectors.isMissingRowIndexFilterAssertion(e) =>
               None
           }
-          provider.exists {
-            _.getRowIndexFilterType != RowIndexFilterType.IF_CONTAINED
-          }
+          provider.exists(filter =>
+            !RapidsDeletionVectors.isSupportedRowIndexFilterType(filter.getRowIndexFilterType))
         }
       case _ => false
     }

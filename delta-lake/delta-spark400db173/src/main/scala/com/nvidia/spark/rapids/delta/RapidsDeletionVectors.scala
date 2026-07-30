@@ -52,7 +52,19 @@ object RapidsDeletionVectors extends Logging {
   case class DeletionVectorLookupResult(
       dvDescriptor: Option[String],
       filterType: Option[RowIndexFilterType],
-      rowIndexFilterProvider: Option[RowIndexFilterProvider])
+      rowIndexFilterProvider: Option[RowIndexFilterProvider]) {
+    def effectiveFilterType: Option[RowIndexFilterType] =
+      filterType.orElse(rowIndexFilterProvider.map(_.getRowIndexFilterType))
+  }
+
+  def isSupportedRowIndexFilterType(filterType: RowIndexFilterType): Boolean = {
+    filterType == RowIndexFilterType.IF_CONTAINED ||
+      filterType == RowIndexFilterType.IF_NOT_CONTAINED
+  }
+
+  def isIfNotContainedRowIndexFilter(filterTypeOpt: Option[RowIndexFilterType]): Boolean = {
+    filterTypeOpt.contains(RowIndexFilterType.IF_NOT_CONTAINED)
+  }
 
   private[delta] def isMissingRowIndexFilterAssertion(e: AssertionError): Boolean =
     Option(e.getMessage).exists(_.contains(MISSING_ROW_INDEX_FILTER_MESSAGE))
@@ -256,7 +268,7 @@ object RapidsDeletionVectors extends Logging {
       rowIndexFilterProviderOpt,
       tablePath)
 
-  private def loadDeletionVector(
+  def loadDeletionVector(
       conf: Configuration,
       dvDescriptorOpt: Option[String],
       filterTypeOpt: Option[RowIndexFilterType],
@@ -265,7 +277,7 @@ object RapidsDeletionVectors extends Logging {
     if (dvDescriptorOpt.isDefined && filterTypeOpt.isDefined) {
       val dvDesc = DeletionVectorDescriptor.deserializeFromBase64(dvDescriptorOpt.get)
       filterTypeOpt.get match {
-        case RowIndexFilterType.IF_CONTAINED =>
+        case RowIndexFilterType.IF_CONTAINED | RowIndexFilterType.IF_NOT_CONTAINED =>
           if (dvDesc.cardinality == 0) {
             serializedEmptyBitmap()
           } else {
@@ -275,7 +287,8 @@ object RapidsDeletionVectors extends Logging {
           }
         case unexpectedFilterType => throw new IllegalStateException(
           s"Unexpected row index filter type for Deletion Vectors. " +
-            s"Expected: ${RowIndexFilterType.IF_CONTAINED}; Actual: ${unexpectedFilterType}")
+            s"Expected: ${RowIndexFilterType.IF_CONTAINED} or " +
+            s"${RowIndexFilterType.IF_NOT_CONTAINED}; Actual: ${unexpectedFilterType}")
       }
     } else if (dvDescriptorOpt.isDefined || filterTypeOpt.isDefined) {
       throw new IllegalStateException(
@@ -289,10 +302,13 @@ object RapidsDeletionVectors extends Logging {
   private def loadDeletionVector(
       conf: Configuration,
       rowIndexFilterProvider: RowIndexFilterProvider): HostMemoryBuffer = {
-    require(rowIndexFilterProvider.getRowIndexFilterType == RowIndexFilterType.IF_CONTAINED,
-      s"Unexpected row index filter type for Deletion Vectors. " +
-        s"Expected: ${RowIndexFilterType.IF_CONTAINED}; " +
-        s"Actual: ${rowIndexFilterProvider.getRowIndexFilterType}")
+    if (!isSupportedRowIndexFilterType(rowIndexFilterProvider.getRowIndexFilterType)) {
+      throw new IllegalStateException(
+        s"Unexpected row index filter type for Deletion Vectors. " +
+          s"Expected: ${RowIndexFilterType.IF_CONTAINED} or " +
+          s"${RowIndexFilterType.IF_NOT_CONTAINED}; " +
+          s"Actual: ${rowIndexFilterProvider.getRowIndexFilterType}")
+    }
     if (rowIndexFilterProvider.getCardinality == 0) {
       serializedEmptyBitmap()
     } else {
@@ -330,23 +346,27 @@ object RapidsDeletionVectors extends Logging {
     if (dvDescriptorOpt.isDefined && filterTypeOpt.isDefined) {
       val dvDesc = DeletionVectorDescriptor.deserializeFromBase64(dvDescriptorOpt.get)
       filterTypeOpt.get match {
-        case RowIndexFilterType.IF_CONTAINED =>
+        case RowIndexFilterType.IF_CONTAINED | RowIndexFilterType.IF_NOT_CONTAINED =>
           val dvStore = new com.databricks.sql.transaction.tahoe.storage.dv.HadoopFileSystemDVStore(
             conf)
           StoredBitmap.create(dvDesc, new Path(tablePath)).load(dvStore)
         case unexpectedFilterType => throw new IllegalStateException(
           s"Unexpected row index filter type for Deletion Vectors. " +
-            s"Expected: ${RowIndexFilterType.IF_CONTAINED}; Actual: ${unexpectedFilterType}")
+            s"Expected: ${RowIndexFilterType.IF_CONTAINED} or " +
+            s"${RowIndexFilterType.IF_NOT_CONTAINED}; Actual: ${unexpectedFilterType}")
       }
     } else if (dvDescriptorOpt.isDefined || filterTypeOpt.isDefined) {
       throw new IllegalStateException(
         "Both dvDescriptorOpt and filterTypeOpt must be defined together or both absent.")
     } else {
       rowIndexFilterProviderOpt.map { provider =>
-        require(provider.getRowIndexFilterType == RowIndexFilterType.IF_CONTAINED,
-          s"Unexpected row index filter type for Deletion Vectors. " +
-            s"Expected: ${RowIndexFilterType.IF_CONTAINED}; " +
-            s"Actual: ${provider.getRowIndexFilterType}")
+        if (!isSupportedRowIndexFilterType(provider.getRowIndexFilterType)) {
+          throw new IllegalStateException(
+            s"Unexpected row index filter type for Deletion Vectors. " +
+              s"Expected: ${RowIndexFilterType.IF_CONTAINED} or " +
+              s"${RowIndexFilterType.IF_NOT_CONTAINED}; " +
+              s"Actual: ${provider.getRowIndexFilterType}")
+        }
         RoaringBitmapArray.readFrom(provider.retrieveSerialized(conf).buffer)
       }.getOrElse(new RoaringBitmapArray())
     }
@@ -356,17 +376,40 @@ object RapidsDeletionVectors extends Logging {
     RapidsDeletionVectorRowCountUtils.getRowGroupMetadata(blocks)
 
   /**
-   * Computes the number of deleted rows within the given row ranges in the bitmap.
+   * Computes the number of marked rows within the given row ranges in the bitmap.
    */
-  def countDeletedRows(
+  private def countMarkedRows(
       scalaBitmap: RoaringBitmapArray,
       rowGroupOffsets: Array[Long],
       rowGroupNumRows: Array[Int]): Long = {
     RapidsDeletionVectorRowCountUtils.countMarkedRows(
-      scalaBitmap.cardinality, rowGroupOffsets, rowGroupNumRows) { countDeletedRow =>
-        scalaBitmap.forEach { deletedIndex: Long =>
-          countDeletedRow(deletedIndex)
+      scalaBitmap.cardinality, rowGroupOffsets, rowGroupNumRows) { countMarkedRow =>
+        scalaBitmap.forEach { markedIndex: Long =>
+          countMarkedRow(markedIndex)
         }
+    }
+  }
+
+  /**
+   * Computes the number of rows remaining after applying the row-index filter within the given
+   * row ranges.
+   */
+  def computeNumRowsAlive(
+      totalNumRows: Long,
+      scalaBitmap: RoaringBitmapArray,
+      filterTypeOpt: Option[RowIndexFilterType],
+      rowGroupOffsets: Array[Long],
+      rowGroupNumRows: Array[Int]): Long = {
+    val numRowsMarked = countMarkedRows(scalaBitmap, rowGroupOffsets, rowGroupNumRows)
+    require(numRowsMarked <= totalNumRows,
+      s"Row-index filter cardinality ($numRowsMarked) exceeds file row count ($totalNumRows)")
+
+    filterTypeOpt match {
+      case Some(RowIndexFilterType.IF_CONTAINED) => totalNumRows - numRowsMarked
+      case Some(RowIndexFilterType.IF_NOT_CONTAINED) => numRowsMarked
+      case None => totalNumRows
+      case Some(unexpectedFilterType) => throw new IllegalStateException(
+        s"Unexpected row index filter type: $unexpectedFilterType")
     }
   }
 

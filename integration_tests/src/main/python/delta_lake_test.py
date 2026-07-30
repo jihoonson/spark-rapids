@@ -205,7 +205,9 @@ cdf_fallback = ["RowDataSourceScanExec"]
 @pytest.mark.parametrize("parquet_reader_type", ["PERFILE", "COALESCING", "MULTITHREADED"], ids=idfn)
 @pytest.mark.skipif(not supports_delta_lake_deletion_vectors(),
                     reason="Delta Lake deletion vector support is required")
-@pytest.mark.skipif(is_databricks_runtime(), reason="https://github.com/NVIDIA/cudf-spark/issues/15365")
+@pytest.mark.skipif(
+    is_databricks_runtime() and not is_databricks173_or_later(),
+    reason="Native Delta CDF reads with deletion vectors require Databricks 17.3+")
 def test_delta_deletion_vector_read_with_cdf(spark_tmp_path, chunk_size, parquet_reader_type):
     data_path = spark_tmp_path + "/DELTA_DATA"
     conf = {"spark.databricks.delta.delete.deletionVectors.persistent": "true",
@@ -431,8 +433,8 @@ def _run_delta_cdf_commit_read_test(
     is_before_spark_353(),
     reason="Spark-RAPIDS native deletion vector reads require Spark 3.5.3+")
 @pytest.mark.skipif(
-    is_databricks_runtime(),
-    reason="https://github.com/NVIDIA/cudf-spark/issues/15365")
+    is_databricks_runtime() and not is_databricks173_or_later(),
+    reason="Native Delta CDF reads with deletion vectors require Databricks 17.3+")
 def test_delta_cdf_mixed_row_index_filter_types_different_partitions(
         spark_tmp_path, parquet_reader_type):
     """
@@ -467,8 +469,8 @@ def test_delta_cdf_mixed_row_index_filter_types_different_partitions(
     is_before_spark_353(),
     reason="Spark-RAPIDS native deletion vector reads require Spark 3.5.3+")
 @pytest.mark.skipif(
-    is_databricks_runtime(),
-    reason="https://github.com/NVIDIA/cudf-spark/issues/15365")
+    is_databricks_runtime() and not is_databricks173_or_later(),
+    reason="Native Delta CDF reads with deletion vectors require Databricks 17.3+")
 def test_delta_cdf_mixed_row_index_filter_types_same_delta_partition(
         spark_tmp_path, parquet_reader_type):
     """
@@ -496,8 +498,8 @@ def test_delta_cdf_mixed_row_index_filter_types_same_delta_partition(
     is_before_spark_353(),
     reason="Spark-RAPIDS native deletion vector reads require Spark 3.5.3+")
 @pytest.mark.skipif(
-    is_databricks_runtime(),
-    reason="https://github.com/NVIDIA/cudf-spark/issues/15365")
+    is_databricks_runtime() and not is_databricks173_or_later(),
+    reason="Native Delta CDF reads with deletion vectors require Databricks 17.3+")
 def test_delta_cdf_dv_to_dv_transition(spark_tmp_path, parquet_reader_type):
     """
     Restore between two non-nested DVs for the same physical file. Delta must report
