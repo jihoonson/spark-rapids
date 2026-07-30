@@ -17,7 +17,7 @@ import os.path
 import pytest
 import re
 
-from spark_session import is_databricks122_or_later, supports_delta_lake_deletion_vectors, \
+from spark_session import is_databricks122_or_later, delta_dv_feature_available, \
     is_databricks173_or_later, with_cpu_session, with_gpu_session
 from asserts import assert_equal
 from conftest import is_databricks_runtime, spark_jvm
@@ -318,7 +318,7 @@ def setup_delta_dest_table(spark, path, dest_table_func, use_cdf, partition_colu
     ddl = schema_to_ddl(spark, dest_df.schema)
     table_properties = {}
     table_properties['delta.enableChangeDataFeed'] = str(use_cdf).lower()
-    if supports_delta_lake_deletion_vectors():
+    if delta_dv_feature_available():
         table_properties['delta.enableDeletionVectors'] = str(enable_deletion_vectors).lower()
     # if any table properties are specified then we need to use SQL to define the table
     sql_text = "CREATE TABLE delta.`{path}` ({ddl}) USING DELTA".format(path=path, ddl=ddl)

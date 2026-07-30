@@ -21,7 +21,7 @@ from marks import *
 import os
 import glob
 import pyarrow.parquet as pq
-from spark_session import is_before_spark_320, is_databricks_runtime, supports_delta_lake_deletion_vectors, \
+from spark_session import is_before_spark_320, is_databricks_runtime, delta_dv_feature_available, \
     with_cpu_session, with_gpu_session, is_before_spark_353, is_spark_353_or_later, \
     is_databricks173_or_later
 
@@ -126,7 +126,7 @@ def test_delta_delete_disabled_fallback(spark_tmp_path, disable_conf, enable_del
 @delta_lake
 @ignore_order
 @pytest.mark.parametrize("use_cdf", [True, False], ids=idfn)
-@pytest.mark.skipif(not supports_delta_lake_deletion_vectors(), \
+@pytest.mark.skipif(not delta_dv_feature_available(), \
     reason="Deletion vectors new in Delta Lake 2.4 / Apache Spark 3.4")
 def test_delta_deletion_vector_fallback(spark_tmp_path, use_cdf):
     data_path = spark_tmp_path + "/DELTA_DATA"
@@ -147,7 +147,7 @@ def test_delta_deletion_vector_fallback(spark_tmp_path, use_cdf):
 @allow_non_gpu("SortExec, ColumnarToRowExec", *delta_meta_allow)
 @delta_lake
 @ignore_order
-@pytest.mark.skipif(not supports_delta_lake_deletion_vectors(), \
+@pytest.mark.skipif(not delta_dv_feature_available(), \
     reason="Deletion vectors new in Delta Lake 2.4 / Apache Spark 3.4")
 def test_delta_deletion_vector(spark_tmp_path):
     data_path = spark_tmp_path + "/DELTA_DATA"
@@ -189,7 +189,7 @@ dv:|   true, true,....|...false, false,....|... false, false |
                "FilterExec", "MapElementsExec", "ProjectExec")
 @delta_lake
 @ignore_order
-@pytest.mark.skipif(not supports_delta_lake_deletion_vectors() or is_before_spark_353(), \
+@pytest.mark.skipif(not delta_dv_feature_available() or is_before_spark_353(), \
                     reason="Deletion vectors new in Delta Lake 2.4 / Apache Spark 3.4")
 @pytest.mark.parametrize("reader_type", ["PERFILE", "COALESCING", "MULTITHREADED"])
 def test_delta_deletion_vector_read_drop_row_group(spark_tmp_path, reader_type):
@@ -243,7 +243,7 @@ def test_delta_deletion_vector_read_drop_row_group(spark_tmp_path, reader_type):
                "FilterExec", "MapElementsExec", "ProjectExec")
 @delta_lake
 @ignore_order
-@pytest.mark.skipif(not supports_delta_lake_deletion_vectors() or is_before_spark_353(), \
+@pytest.mark.skipif(not delta_dv_feature_available() or is_before_spark_353(), \
                     reason="Deletion vectors new in Delta Lake 2.4 / Apache Spark 3.4")
 @pytest.mark.parametrize("reader_type", ["PERFILE", "COALESCING", "MULTITHREADED"])
 # a='' shouldn't match anything as a is an int
@@ -401,7 +401,7 @@ def test_delta_delete_preserves_row_tracking_db173(spark_tmp_path):
 
 @allow_non_gpu("ExecutedCommandExec", *delta_meta_allow)
 @delta_lake
-@pytest.mark.skipif(not supports_delta_lake_deletion_vectors() or is_before_spark_353(),
+@pytest.mark.skipif(not delta_dv_feature_available() or is_before_spark_353(),
     reason="Deletion vectors new in Delta Lake 2.4 / Apache Spark 3.4")
 def test_delta_delete_twice_with_dv(spark_tmp_path):
     """Regression test for https://github.com/NVIDIA/spark-rapids/issues/14442.

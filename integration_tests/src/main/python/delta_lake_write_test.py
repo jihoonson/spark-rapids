@@ -47,7 +47,7 @@ _delta_confs = copy_and_update(writer_confs, delta_writes_enabled_conf,
                                 "spark.sql.legacy.parquet.int96RebaseModeInRead": "CORRECTED"})
 
 def get_writer_with_deletion_vector_property_set(writer, enable_deletion_vectors):
-    if supports_delta_lake_deletion_vectors():
+    if delta_dv_feature_available():
         return writer.option("delta.enableDeletionVectors", str(enable_deletion_vectors).lower())
     return writer
 
@@ -63,7 +63,7 @@ def _create_table(spark, path, schema, partitioned_by=None, enable_deletion_vect
     if partitioned_by:
         q += f" PARTITIONED BY ({partitioned_by})"
 
-    if supports_delta_lake_deletion_vectors():
+    if delta_dv_feature_available():
         q += " TBLPROPERTIES ('delta.enableDeletionVectors' = {})".format(str(enable_deletion_vectors).lower())
     spark.sql(q)
 
@@ -767,7 +767,7 @@ def _atomic_write_table_as_select_sql(gens, spark_tmp_table_factory, replace,
             'delta.enableChangeDataFeed': f'{str(use_cdf).lower()}'
         }
 
-        if supports_delta_lake_deletion_vectors():
+        if delta_dv_feature_available():
             table_props['delta.enableDeletionVectors'] = f'{str(enable_deletion_vectors).lower()}'
 
         table_props_str = ",\n".join([f"'{k}' = '{v}'" for k, v in table_props.items()])
