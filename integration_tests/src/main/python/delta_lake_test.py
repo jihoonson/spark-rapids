@@ -22,7 +22,7 @@ from marks import allow_non_gpu, delta_lake, ignore_order
 from parquet_test import reader_opt_confs_no_native
 from parquet_test_utils import parquet_row_group_midpoints
 from spark_session import with_cpu_session, with_gpu_session, is_databricks_runtime, \
-    is_spark_320_or_later, is_spark_340_or_later, delta_dv_feature_available, is_spark_401_or_later, \
+    is_spark_320_or_later, is_spark_340_or_later, supports_delta_lake_deletion_vectors, is_spark_401_or_later, \
     gpu_supports_delta_dv_scan, is_before_spark_353, is_databricks173_or_later
 
 _conf = {'spark.rapids.sql.explain': 'ALL'}
@@ -173,7 +173,7 @@ def do_test_delta_deletion_vector_read(data_path, use_cdf, conf, test_sql, post_
 @pytest.mark.parametrize("dv_predicate_pushdown", [True, False], ids=idfn)
 @pytest.mark.parametrize("parquet_reader_type", ["PERFILE", "COALESCING"], ids=idfn)
 @pytest.mark.parametrize("use_metadata_row_index", [True, False], ids=idfn)
-@pytest.mark.skipif(not delta_dv_feature_available(),
+@pytest.mark.skipif(not supports_delta_lake_deletion_vectors(),
                     reason="Delta Lake deletion vector support is required")
 def test_delta_deletion_vector_read(spark_tmp_path, chunk_size, use_cdf, dv_predicate_pushdown, parquet_reader_type, use_metadata_row_index):
     data_path = spark_tmp_path + "/DELTA_DATA"
@@ -244,7 +244,7 @@ def test_delta_deletion_vector_read_with_cdf(spark_tmp_path, chunk_size, parquet
 @ignore_order(local=True)
 @pytest.mark.parametrize("chunk_size", ["2000", "4000", None], ids=idfn)
 @pytest.mark.parametrize("parquet_reader_type", ["PERFILE", "COALESCING", "MULTITHREADED"], ids=idfn)
-@pytest.mark.skipif(not delta_dv_feature_available(),
+@pytest.mark.skipif(not supports_delta_lake_deletion_vectors(),
                     reason="Delta Lake deletion vector feature is required")
 @pytest.mark.skipif(gpu_supports_delta_dv_scan(),
                     reason="GPU Delta deletion vector scans are supported")
@@ -454,7 +454,7 @@ def _run_delta_cdf_commit_read_test(
     ["MULTITHREADED", "COALESCING"],
     ids=idfn)
 @pytest.mark.skipif(
-    not delta_dv_feature_available(),
+    not supports_delta_lake_deletion_vectors(),
     reason="Delta Lake deletion vector support is required")
 @pytest.mark.skipif(
     is_before_spark_353(),
@@ -490,7 +490,7 @@ def test_delta_cdf_mixed_row_index_filter_types_different_partitions(
     ["MULTITHREADED", "COALESCING"],
     ids=idfn)
 @pytest.mark.skipif(
-    not delta_dv_feature_available(),
+    not supports_delta_lake_deletion_vectors(),
     reason="Delta Lake deletion vector support is required")
 @pytest.mark.skipif(
     is_before_spark_353(),
@@ -519,7 +519,7 @@ def test_delta_cdf_mixed_row_index_filter_types_same_delta_partition(
     ["MULTITHREADED", "COALESCING"],
     ids=idfn)
 @pytest.mark.skipif(
-    not delta_dv_feature_available(),
+    not supports_delta_lake_deletion_vectors(),
     reason="Delta Lake deletion vector support is required")
 @pytest.mark.skipif(
     is_before_spark_353(),
@@ -551,7 +551,7 @@ def test_delta_cdf_dv_to_dv_transition(spark_tmp_path, parquet_reader_type):
 @pytest.mark.parametrize("dv_predicate_pushdown", [True, False], ids=idfn)
 @pytest.mark.parametrize("use_metadata_row_index", [True, False], ids=idfn)
 @pytest.mark.parametrize("combine_size", ["0", "1M"], ids=idfn)
-@pytest.mark.skipif(not delta_dv_feature_available(),
+@pytest.mark.skipif(not supports_delta_lake_deletion_vectors(),
                     reason="Delta Lake deletion vector support is required")
 def test_delta_deletion_vector_multithreaded_read(spark_tmp_path, chunk_size, use_cdf,
                                                   dv_predicate_pushdown, use_metadata_row_index,
@@ -580,7 +580,7 @@ def test_delta_deletion_vector_multithreaded_read(spark_tmp_path, chunk_size, us
 @pytest.mark.parametrize("use_cdf", [True, False], ids=idfn)
 @pytest.mark.parametrize("dv_predicate_pushdown", [True, False], ids=idfn)
 @pytest.mark.parametrize("use_metadata_row_index", [True, False], ids=idfn)
-@pytest.mark.skipif(not delta_dv_feature_available(),
+@pytest.mark.skipif(not supports_delta_lake_deletion_vectors(),
                     reason="Delta Lake deletion vector support is required")
 @pytest.mark.skipif(is_databricks_runtime(), reason="This test is currently failing on Databricks due to https://github.com/nviDIA/spark-rapids/issues/14319")
 def test_delta_deletion_vector_multithreaded_combine_count_star(
@@ -687,7 +687,7 @@ def test_delta_deletion_vector_multithreaded_combine_count_star_mixed_dv_no_dv(
 @pytest.mark.parametrize("dv_predicate_pushdown", [True, False], ids=idfn)
 @pytest.mark.parametrize("use_metadata_row_index", [True, False], ids=idfn)
 @pytest.mark.parametrize("combine_size", ["0", "1M"], ids=idfn)
-@pytest.mark.skipif(not delta_dv_feature_available(),
+@pytest.mark.skipif(not supports_delta_lake_deletion_vectors(),
                     reason="Delta Lake deletion vector support is required")
 def test_delta_deletion_vector_multithreaded_read_partitioned_table(
         spark_tmp_path, dv_predicate_pushdown, use_metadata_row_index, combine_size):
@@ -722,7 +722,7 @@ def test_delta_deletion_vector_multithreaded_read_partitioned_table(
 @pytest.mark.parametrize("dv_predicate_pushdown", [True, False], ids=idfn)
 @pytest.mark.parametrize("parquet_reader_type", ["PERFILE", "COALESCING", "MULTITHREADED"], ids=idfn)
 @pytest.mark.parametrize("use_metadata_row_index", [True, False], ids=idfn)
-@pytest.mark.skipif(not delta_dv_feature_available(),
+@pytest.mark.skipif(not supports_delta_lake_deletion_vectors(),
                     reason="Delta Lake deletion vector support is required")
 def test_delta_empty_deletion_vector_read(spark_tmp_path, use_chunked_reader, use_cdf, dv_predicate_pushdown, parquet_reader_type, use_metadata_row_index):
     data_path = spark_tmp_path + "/DELTA_DATA"
@@ -890,7 +890,7 @@ def test_delta_read_column_mapping(spark_tmp_path, reader_confs, mapping, enable
     })
     def create_delta(spark):
         df = gen_df(spark, gen_list).coalesce(1).write.format("delta")
-        if delta_dv_feature_available():
+        if supports_delta_lake_deletion_vectors():
             df.option("delta.enableDeletionVectors", str(enable_deletion_vectors).lower())
         df.partitionBy("b", "d") \
         .save(data_path)
@@ -927,7 +927,7 @@ def test_delta_name_column_mapping_no_field_ids(spark_tmp_path, enable_deletion_
 @ignore_order(local=True)
 @pytest.mark.parametrize("dv_predicate_pushdown", [True, False], ids=idfn)
 @pytest.mark.parametrize("use_metadata_row_index", [True, False], ids=idfn)
-@pytest.mark.skipif(not delta_dv_feature_available(),
+@pytest.mark.skipif(not supports_delta_lake_deletion_vectors(),
                     reason="Delta Lake deletion vector support is required")
 @pytest.mark.skipif(is_databricks_runtime(), reason="Databricks Spark generates a different query plan for the test query that is not convertible to a GPU plan")
 def test_delta_deletion_vector_coalescing_count_star(
@@ -968,7 +968,7 @@ def test_delta_deletion_vector_coalescing_count_star(
 @ignore_order(local=True)
 @pytest.mark.parametrize("dv_predicate_pushdown", [True, False], ids=idfn)
 @pytest.mark.parametrize("use_metadata_row_index", [True, False], ids=idfn)
-@pytest.mark.skipif(not delta_dv_feature_available(),
+@pytest.mark.skipif(not supports_delta_lake_deletion_vectors(),
                     reason="Delta Lake deletion vector support is required")
 def test_delta_deletion_vector_coalescing_partitioned_table(
         spark_tmp_path, dv_predicate_pushdown, use_metadata_row_index):
@@ -1140,7 +1140,7 @@ def test_delta_deletion_vector_interleaved_file_splits(
 @ignore_order(local=True)
 @pytest.mark.parametrize("reader_type", ["PERFILE", "MULTITHREADED", "COALESCING"], ids=idfn)
 @pytest.mark.parametrize("dv_predicate_pushdown", [True, False], ids=idfn)
-@pytest.mark.skipif(not delta_dv_feature_available(),
+@pytest.mark.skipif(not supports_delta_lake_deletion_vectors(),
                     reason="Delta Lake deletion vector support is required")
 def test_delta_deletion_vector_mixed_dv_no_dv(spark_tmp_path, reader_type, dv_predicate_pushdown):
     """
@@ -1174,7 +1174,7 @@ def test_delta_deletion_vector_mixed_dv_no_dv(spark_tmp_path, reader_type, dv_pr
 @delta_lake
 @ignore_order(local=True)
 @pytest.mark.parametrize("reader_type", ["PERFILE", "MULTITHREADED", "COALESCING"], ids=idfn)
-@pytest.mark.skipif(not delta_dv_feature_available(),
+@pytest.mark.skipif(not supports_delta_lake_deletion_vectors(),
                     reason="Delta Lake deletion vector support is required")
 @pytest.mark.skipif(is_databricks_runtime(), reason="https://github.com/NVIDIA/spark-rapids/issues/7733")
 def test_delta_deletion_vector_ignore_missing_files(spark_tmp_path, reader_type):
@@ -1213,7 +1213,7 @@ def test_delta_deletion_vector_ignore_missing_files(spark_tmp_path, reader_type)
 @delta_lake
 @ignore_order(local=True)
 @pytest.mark.parametrize("reader_type", ["PERFILE", "MULTITHREADED", "COALESCING"], ids=idfn)
-@pytest.mark.skipif(not delta_dv_feature_available(),
+@pytest.mark.skipif(not supports_delta_lake_deletion_vectors(),
                     reason="Delta Lake deletion vector support is required")
 @pytest.mark.skipif(is_databricks_runtime(), reason="https://github.com/NVIDIA/spark-rapids/issues/7733")
 def test_delta_deletion_vector_ignore_corrupt_files(spark_tmp_path, reader_type):
@@ -1367,7 +1367,7 @@ def _test_delta_dv_filter_after_native_scan(spark_tmp_path, cpu_bridge_enabled):
 @allow_non_gpu("FilterExec", "In", "InSet", "ColumnarToRowExec", *delta_meta_allow)
 @delta_lake
 @ignore_order(local=True)
-@pytest.mark.skipif(not delta_dv_feature_available(),
+@pytest.mark.skipif(not supports_delta_lake_deletion_vectors(),
                     reason="Delta Lake deletion vector support is required")
 @pytest.mark.skipif(is_databricks_runtime() and not is_databricks173_or_later(),
                     reason="Deletion vector scan is not supported on Databricks before 17.3")
@@ -1385,7 +1385,7 @@ def test_delta_dv_cpu_filter_after_native_scan(spark_tmp_path):
 @allow_non_gpu("FilterExec", "In", "InSet", "ColumnarToRowExec", *delta_meta_allow)
 @delta_lake
 @ignore_order(local=True)
-@pytest.mark.skipif(not delta_dv_feature_available(),
+@pytest.mark.skipif(not supports_delta_lake_deletion_vectors(),
                     reason="Delta Lake deletion vector support is required")
 @pytest.mark.skipif(is_databricks_runtime() and not is_databricks173_or_later(),
                     reason="Deletion vector scan is not supported on Databricks before 17.3")

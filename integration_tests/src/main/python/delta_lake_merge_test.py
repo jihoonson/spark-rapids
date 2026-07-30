@@ -21,7 +21,7 @@ from delta_lake_merge_common import *
 from marks import *
 from pyspark.sql.types import *
 from spark_session import (is_before_spark_320, is_databricks_runtime, spark_version,
-                           delta_dv_feature_available, is_before_spark_353,
+                           supports_delta_lake_deletion_vectors, is_before_spark_353,
                            is_spark_400_or_later, is_databricks143,
                            is_databricks173_or_later)
 
@@ -169,7 +169,7 @@ def test_delta_merge_disabled_fallback(spark_tmp_path, spark_tmp_table_factory, 
 @delta_lake
 @ignore_order
 @pytest.mark.skipif(is_before_spark_320(), reason="Delta Lake writes are not supported before Spark 3.2.x")
-@pytest.mark.skipif(delta_dv_feature_available(), reason="Deletion Vectors aren't supported")
+@pytest.mark.skipif(supports_delta_lake_deletion_vectors(), reason="Deletion Vectors aren't supported")
 def test_delta_merge_fallback_with_deletion_vectors(spark_tmp_path, spark_tmp_table_factory):
     def checker(data_path, do_merge):
         assert_gpu_fallback_write(do_merge, read_delta_path, data_path,
@@ -465,7 +465,7 @@ def test_delta_merge_not_matched_by_source_db173_fallback(spark_tmp_path, spark_
 @ignore_order
 @pytest.mark.skipif(not is_databricks173_or_later(),
                     reason="Issue-specific deletion vector fallback coverage for Databricks 17.3+")
-@pytest.mark.skipif(not delta_dv_feature_available(),
+@pytest.mark.skipif(not supports_delta_lake_deletion_vectors(),
                     reason="Delta Lake deletion vector support is required")
 def test_delta_merge_deletion_vector_db173_fallback(spark_tmp_path, spark_tmp_table_factory):
     conf = copy_and_update(

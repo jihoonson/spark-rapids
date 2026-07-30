@@ -24,7 +24,7 @@ from spark_session import (
     is_databricks_runtime,
     is_before_spark_353,
     is_spark_400_or_later,
-    delta_dv_feature_available,
+    supports_delta_lake_deletion_vectors,
     with_cpu_session,
 )
 

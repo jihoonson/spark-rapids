@@ -334,7 +334,7 @@ def is_databricks143():
 def is_databricks173_or_later():
     return is_databricks_version_or_later(17, 3)
 
-def delta_dv_feature_available():
+def supports_delta_lake_deletion_vectors():
     """Whether the current Delta Lake runtime provides the deletion-vector feature."""
     if is_databricks_runtime():
         return is_databricks122_or_later()

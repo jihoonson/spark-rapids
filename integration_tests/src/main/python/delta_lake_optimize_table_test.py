@@ -18,7 +18,7 @@ from data_gen import *
 from delta_lake_utils import *
 from marks import *
 from spark_session import with_cpu_session, with_gpu_session, with_spark_session, is_before_spark_353, \
-    delta_dv_feature_available, is_databricks_runtime, is_databricks173_or_later
+    supports_delta_lake_deletion_vectors, is_databricks_runtime, is_databricks173_or_later
 from pyspark.sql.types import IntegerType, StringType
 
 _optimize_conf = copy_and_update(delta_writes_enabled_conf, {
@@ -53,7 +53,7 @@ def _with_gpu_session_no_test(func, conf):
 @pytest.mark.skipif(is_before_spark_353(), reason="OPTIMIZE table command is supported in Spark 3.5.3+")
 @pytest.mark.skipif(is_databricks_runtime() and not is_databricks173_or_later(),
                     reason="OPTIMIZE table command is supported for Databricks 17.3+")
-@pytest.mark.skipif(not delta_dv_feature_available(), reason="Deletion vectors aren't supported")
+@pytest.mark.skipif(not supports_delta_lake_deletion_vectors(), reason="Deletion vectors aren't supported")
 def test_delta_optimize_fallback_with_deletion_vectors(spark_tmp_path):
     _assert_optimize_fallback(True, spark_tmp_path)
 
@@ -63,7 +63,7 @@ def test_delta_optimize_fallback_with_deletion_vectors(spark_tmp_path):
 @pytest.mark.skipif(is_before_spark_353(), reason="OPTIMIZE table command is supported in Spark 3.5.3+")
 @pytest.mark.skipif(not is_databricks173_or_later(),
                     reason="Existing-DV OPTIMIZE fallback guard is for Databricks 17.3+")
-@pytest.mark.skipif(not delta_dv_feature_available(), reason="Deletion vectors aren't supported")
+@pytest.mark.skipif(not supports_delta_lake_deletion_vectors(), reason="Deletion vectors aren't supported")
 def test_delta_optimize_fallback_with_existing_deletion_vectors(spark_tmp_path):
     conf = copy_and_update(_optimize_conf, {
         "spark.databricks.delta.delete.deletionVectors.persistent": "true"
@@ -79,7 +79,7 @@ def test_delta_optimize_fallback_with_existing_deletion_vectors(spark_tmp_path):
 @allow_non_gpu('ExecutedCommandExec', *delta_meta_allow)
 @pytest.mark.skipif(not is_databricks173_or_later(),
                     reason="Partitioned existing-DV OPTIMIZE fallback guard is for Databricks 17.3+")
-@pytest.mark.skipif(not delta_dv_feature_available(), reason="Deletion vectors aren't supported")
+@pytest.mark.skipif(not supports_delta_lake_deletion_vectors(), reason="Deletion vectors aren't supported")
 def test_delta_optimize_fallback_partitioned_table_with_existing_deletion_vectors(spark_tmp_path):
     conf = copy_and_update(_optimize_conf, {
         "spark.databricks.delta.delete.deletionVectors.persistent": "true",
@@ -123,7 +123,7 @@ def _write_many_small_files(spark, enable_deletion_vectors, path, partition_colu
         writer = df.write.format("delta").mode("overwrite")
         if partition_columns:
             writer = writer.partitionBy(partition_columns)
-        if delta_dv_feature_available():
+        if supports_delta_lake_deletion_vectors():
             writer = writer.option("delta.enableDeletionVectors", str(enable_deletion_vectors).lower())
         writer.save(path)
     if not clustering_columns:
@@ -465,7 +465,7 @@ def test_delta_optimize_clustered_table_gpu_write(spark_tmp_path):
 @delta_lake
 @pytest.mark.skipif(not is_databricks173_or_later(),
                     reason="Native liquid DV OPTIMIZE write coverage is for Databricks 17.3+")
-@pytest.mark.skipif(not delta_dv_feature_available(),
+@pytest.mark.skipif(not supports_delta_lake_deletion_vectors(),
                     reason="Deletion vectors aren't supported")
 def test_delta_optimize_clustered_table_gpu_write_with_deletion_vectors(spark_tmp_path):
     _assert_liquid_optimize_gpu_write_parity(

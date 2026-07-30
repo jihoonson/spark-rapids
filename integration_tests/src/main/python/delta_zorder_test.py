@@ -18,7 +18,7 @@ from asserts import assert_cpu_and_gpu_are_equal_collect_with_capture, assert_gp
 from data_gen import *
 from delta_lake_utils import deletion_vector_values_with_xfail_reasons
 from marks import allow_non_gpu, ignore_order, delta_lake
-from spark_session import is_databricks_runtime, with_cpu_session, with_gpu_session, is_databricks104_or_later, is_databricks113_or_later, delta_dv_feature_available
+from spark_session import is_databricks_runtime, with_cpu_session, with_gpu_session, is_databricks104_or_later, is_databricks113_or_later, supports_delta_lake_deletion_vectors
 from dpp_test import _exchange_reuse_conf
 
 # Almost all of this is the metadata query
@@ -135,7 +135,7 @@ def test_delta_dfp_reuse_broadcast_exchange(spark_tmp_table_factory, s_index, aq
         ], 10000)
 
         writer = df.write.format("delta").mode("overwrite")
-        if delta_dv_feature_available():
+        if supports_delta_lake_deletion_vectors():
             writer.option("delta.enableDeletionVectors", str(enable_deletion_vectors).lower())
         writer.partitionBy("key", "skey") \
             .saveAsTable(fact_table)
@@ -153,7 +153,7 @@ def test_delta_dfp_reuse_broadcast_exchange(spark_tmp_table_factory, s_index, aq
         ], 2000)
         writer = df.write.format("delta") \
             .mode("overwrite")
-        if delta_dv_feature_available():
+        if supports_delta_lake_deletion_vectors():
             writer.option("delta.enableDeletionVectors", str(enable_deletion_vectors).lower())
         writer.saveAsTable(dim_table)
         return df.select('filter').first()[0]
