@@ -46,6 +46,10 @@ class ShimmedExecutionPlanCaptureCallbackImpl extends ExecutionPlanCaptureCallba
   private[this] var shouldValidate: Boolean = false
   private[this] val validationPlans: ArrayBuffer[(String, SparkPlan)] = ArrayBuffer.empty
 
+  protected def waitUntilListenerBusEmpty(timeoutMillis: Long): Unit = {
+    SparkSession.active.sparkContext.listenerBus.waitUntilEmpty(timeoutMillis)
+  }
+
   override def captureIfNeeded(qe: QueryExecution): Unit = synchronized {
     if (shouldCapture) {
       execPlans.append(qe.executedPlan)
@@ -74,7 +78,7 @@ class ShimmedExecutionPlanCaptureCallbackImpl extends ExecutionPlanCaptureCallba
 
   override def startValidation(timeoutMillis: Long): Unit = {
     try {
-      SparkSession.active.sparkContext.listenerBus.waitUntilEmpty(timeoutMillis)
+      waitUntilListenerBusEmpty(timeoutMillis)
       synchronized {
         validationPlans.clear()
         shouldValidate = true
@@ -115,7 +119,7 @@ class ShimmedExecutionPlanCaptureCallbackImpl extends ExecutionPlanCaptureCallba
 
   override def getValidationErrorWithTimeout(timeoutMillis: Long): String = {
     try {
-      SparkSession.active.sparkContext.listenerBus.waitUntilEmpty(timeoutMillis)
+      waitUntilListenerBusEmpty(timeoutMillis)
       val capturedPlans = synchronized {
         shouldValidate = false
         val plans = validationPlans.toArray

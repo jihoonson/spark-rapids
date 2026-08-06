@@ -246,7 +246,7 @@ object TestPlanValidator {
     }
   }
 
-  private def collectPlans(plan: SparkPlan): Seq[SparkPlan] = {
+  private[rapids] def collectPlans(plan: SparkPlan): Seq[SparkPlan] = {
     val visited = new IdentityHashMap[SparkPlan, java.lang.Boolean]()
     val queue = mutable.Queue[SparkPlan](plan)
     val plans = mutable.ArrayBuffer[SparkPlan]()

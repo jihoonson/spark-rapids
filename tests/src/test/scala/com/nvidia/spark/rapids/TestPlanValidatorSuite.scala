@@ -16,13 +16,21 @@
 
 package com.nvidia.spark.rapids
 
+import org.mockito.ArgumentMatchers.any
+import org.mockito.Mockito.{mock, when}
 import org.scalatest.funsuite.AnyFunSuite
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.execution.{BinaryExecNode, LeafExecNode, SparkPlan, UnaryExecNode}
+import org.apache.spark.sql.catalyst.expressions.{Add, Attribute, Expression, Literal,
+  NamedExpression}
+import org.apache.spark.sql.catalyst.trees.TreeNodeTag
+import org.apache.spark.sql.execution.{BinaryExecNode, InSubqueryExec => SparkInSubqueryExec,
+  LeafExecNode, ReusedSubqueryExec, SparkPlan, SubqueryExec, UnaryExecNode}
+import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanExec, QueryStageExec}
+import org.apache.spark.sql.execution.exchange.{Exchange, ReusedExchangeExec}
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.vectorized.ColumnarBatch
 
 private case class PlanValidationLeafExec(marker: Int = 0) extends LeafExecNode {
   override def output: Seq[Attribute] = Seq.empty
@@ -51,6 +59,47 @@ private case class PlanValidationBinaryExec(left: SparkPlan, right: SparkPlan)
       newRight: SparkPlan): SparkPlan = copy(left = newLeft, right = newRight)
 }
 
+private case class PlanValidationExpressionExec(
+    testExpressions: Seq[Expression]) extends LeafExecNode {
+  override def output: Seq[Attribute] = Seq.empty
+  override def doCanonicalize(): SparkPlan = this
+  override protected def doExecute(): RDD[InternalRow] =
+    throw new UnsupportedOperationException("PlanValidationExpressionExec is not executable")
+}
+
+private case class PlanValidationGpuExec(
+    testGpuExpressions: Seq[Expression]) extends LeafExecNode with GpuExec {
+  override def output: Seq[Attribute] = Seq.empty
+  override def gpuExpressions: Seq[Expression] = testGpuExpressions
+  override def doCanonicalize(): SparkPlan = this
+  override protected def doExecute(): RDD[InternalRow] =
+    throw new UnsupportedOperationException("PlanValidationGpuExec is not executable")
+  override protected def internalDoExecuteColumnar(): RDD[ColumnarBatch] =
+    throw new UnsupportedOperationException("PlanValidationGpuExec is not executable")
+}
+
+private case class PlanValidationRequiredLeafExec() extends LeafExecNode {
+  override def output: Seq[Attribute] = Seq.empty
+  override def doCanonicalize(): SparkPlan = this
+  override protected def doExecute(): RDD[InternalRow] =
+    throw new UnsupportedOperationException("PlanValidationRequiredLeafExec is not executable")
+}
+
+private case class PlanValidationDisallowedExec() extends LeafExecNode {
+  override def output: Seq[Attribute] = Seq.empty
+  override def doCanonicalize(): SparkPlan = this
+  override protected def doExecute(): RDD[InternalRow] =
+    throw new UnsupportedOperationException("PlanValidationDisallowedExec is not executable")
+}
+
+private case class PlanValidationExchangeExec(child: SparkPlan) extends Exchange {
+  override def doCanonicalize(): SparkPlan = this
+  override protected def doExecute(): RDD[InternalRow] =
+    throw new UnsupportedOperationException("PlanValidationExchangeExec is not executable")
+  override protected def withNewChildInternal(newChild: SparkPlan): SparkPlan =
+    copy(child = newChild)
+}
+
 class TestPlanValidatorSuite extends AnyFunSuite {
   private def context(
       marker: String,
@@ -61,7 +110,11 @@ class TestPlanValidatorSuite extends AnyFunSuite {
       RapidsConf.TEST_ALLOWED_NONGPU.key -> Seq(
         "PlanValidationLeafExec",
         "PlanValidationUnaryExec",
-        "PlanValidationBinaryExec").mkString(","),
+        "PlanValidationBinaryExec",
+        "PlanValidationExpressionExec",
+        "PlanValidationRequiredLeafExec",
+        "PlanValidationExchangeExec",
+        "SubqueryExec").mkString(","),
       RapidsConf.TEST_VALIDATE_EXECS_ONGPU.key -> requiredExec,
       "spark.rapids.sql.test.validation.marker" -> marker), adaptiveEnabled = false)
   }
@@ -124,5 +177,92 @@ class TestPlanValidatorSuite extends AnyFunSuite {
         sqlConf.setConfString(key, previousValue)
       }
     }
+  }
+
+  test("collects final plans through adaptive and query-stage wrappers") {
+    val required = PlanValidationRequiredLeafExec()
+    val stage = mock(classOf[QueryStageExec])
+    when(stage.plan).thenReturn(required)
+    when(stage.children).thenReturn(Seq.empty)
+    when(stage.expressions).thenReturn(Seq.empty)
+
+    val finalPlan = TestPlanValidator.tagForValidation(
+      PlanValidationUnaryExec(stage),
+      context("adaptive-query-stage", "PlanValidationRequiredLeafExec"))
+    val adaptive = mock(classOf[AdaptiveSparkPlanExec])
+    when(adaptive.executedPlan).thenReturn(finalPlan)
+    when(adaptive.children).thenReturn(Seq.empty)
+    when(adaptive.expressions).thenReturn(Seq.empty)
+    when(adaptive.getTagValue(
+      any[TreeNodeTag[TestPlanValidator.ValidationContext]])).thenReturn(None)
+
+    val plans = TestPlanValidator.collectPlans(adaptive)
+    assert(plans.exists(_ eq adaptive))
+    assert(plans.exists(_ eq finalPlan))
+    assert(plans.exists(_ eq stage))
+    assert(plans.exists(_ eq required))
+    TestPlanValidator.validatePlan(adaptive)
+  }
+
+  test("collects reused exchange and subquery graphs once by identity") {
+    val exchangeLeaf = PlanValidationRequiredLeafExec()
+    val exchange = PlanValidationExchangeExec(exchangeLeaf)
+    val reusedExchangeLeft = ReusedExchangeExec(exchange.output, exchange)
+    val reusedExchangeRight = ReusedExchangeExec(exchange.output, exchange)
+
+    val subqueryLeaf = PlanValidationRequiredLeafExec()
+    val subquery = SubqueryExec("validation-subquery", subqueryLeaf)
+    val reusedSubqueryLeft = ReusedSubqueryExec(subquery)
+    val reusedSubqueryRight = ReusedSubqueryExec(subquery)
+
+    val root = PlanValidationBinaryExec(
+      PlanValidationBinaryExec(reusedExchangeLeft, reusedExchangeRight),
+      PlanValidationBinaryExec(reusedSubqueryLeft, reusedSubqueryRight))
+    val plans = TestPlanValidator.collectPlans(root)
+
+    assert(plans.count(_ eq exchange) == 1)
+    assert(plans.count(_ eq exchangeLeaf) == 1)
+    assert(plans.count(_ eq subquery) == 1)
+    assert(plans.count(_ eq subqueryLeaf) == 1)
+  }
+
+  test("collects subquery plans referenced from expressions") {
+    val subqueryLeaf = PlanValidationRequiredLeafExec()
+    val subquery = SubqueryExec("validation-expression-subquery", subqueryLeaf)
+    val reusedSubquery = ReusedSubqueryExec(subquery)
+    val inSubquery = SparkInSubqueryExec(
+      Literal(1), reusedSubquery, NamedExpression.newExprId)
+    val root = PlanValidationExpressionExec(Seq(inSubquery))
+
+    val plans = TestPlanValidator.collectPlans(root)
+    assert(plans.exists(_ eq reusedSubquery))
+    assert(plans.exists(_ eq subquery))
+    assert(plans.exists(_ eq subqueryLeaf))
+
+    TestPlanValidator.tagForValidation(
+      root, context("expression-subquery", "PlanValidationRequiredLeafExec"))
+    TestPlanValidator.validatePlan(root)
+  }
+
+  test("required exec and CPU rejection checks use the complete collected plan") {
+    val requiredPlan = TestPlanValidator.tagForValidation(
+      PlanValidationUnaryExec(PlanValidationRequiredLeafExec()),
+      context("required", "PlanValidationRequiredLeafExec"))
+    TestPlanValidator.validatePlan(requiredPlan)
+
+    val cpuPlan = TestPlanValidator.tagForValidation(
+      PlanValidationUnaryExec(PlanValidationDisallowedExec()), context("cpu-operator"))
+    val cpuError = intercept[IllegalArgumentException] {
+      TestPlanValidator.validatePlan(cpuPlan)
+    }
+    assert(cpuError.getMessage.contains("PlanValidationDisallowedExec"))
+
+    val expressionPlan = TestPlanValidator.tagForValidation(
+      PlanValidationUnaryExec(PlanValidationGpuExec(Seq(Add(Literal(1), Literal(2))))),
+      context("cpu-expression"))
+    val expressionError = intercept[IllegalArgumentException] {
+      TestPlanValidator.validatePlan(expressionPlan)
+    }
+    assert(expressionError.getMessage.contains("Add"))
   }
 }
