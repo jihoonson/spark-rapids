@@ -113,8 +113,7 @@ class TestPlanValidatorSuite extends AnyFunSuite {
         "PlanValidationBinaryExec",
         "PlanValidationExpressionExec",
         "PlanValidationRequiredLeafExec",
-        "PlanValidationExchangeExec",
-        "SubqueryExec").mkString(","),
+        "PlanValidationExchangeExec").mkString(","),
       RapidsConf.TEST_VALIDATE_EXECS_ONGPU.key -> requiredExec,
       "spark.rapids.sql.test.validation.marker" -> marker), adaptiveEnabled = false)
   }

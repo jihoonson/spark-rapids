@@ -179,7 +179,7 @@ object TestPlanValidator {
       case _: BroadcastHashJoinExec | _: BroadcastNestedLoopJoinExec if adaptiveEnabled =>
         // Broadcast joins are left on CPU for now when AQE is enabled.
       case _: AdaptiveSparkPlanExec | _: QueryStageExec |
-          _: ReusedExchangeExec | _: ReusedSubqueryExec |
+          _: ReusedExchangeExec | _: ReusedSubqueryExec | _: SubqueryExec |
           _: WholeStageCodegenExec | _: InputAdapter =>
         // Structural wrappers are validated through their underlying plans.
       case p if SparkShimImpl.isAqePlan(p) =>
