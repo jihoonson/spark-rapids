@@ -459,6 +459,7 @@ if is_databricks_version_or_later(14, 3):
 # Verify that DPP and AQE can coexist in even some odd cases involving multiple tables
 @ignore_order(local=True)
 @allow_non_gpu(*aqe_join_with_dpp_fallback)
+@pytest.mark.xfail(reason="https://github.com/NVIDIA/cudf-spark/issues/15586")
 def test_aqe_join_with_dpp(spark_tmp_path):
     data_path = spark_tmp_path + '/PARQUET_DATA'
     def write_data(spark):
@@ -512,6 +513,7 @@ def test_aqe_join_with_dpp(spark_tmp_path):
 # Verify that DPP and AQE can coexist in even some odd cases involving 2 tables with multiple columns
 @ignore_order(local=True)
 @allow_non_gpu(*aqe_join_with_dpp_fallback)
+@pytest.mark.xfail(reason="https://github.com/NVIDIA/cudf-spark/issues/15586")
 def test_aqe_join_with_dpp_multi_columns(spark_tmp_path):
     conf = copy_and_update(_adaptive_conf, {
         "spark.rapids.sql.explain": "ALL",
