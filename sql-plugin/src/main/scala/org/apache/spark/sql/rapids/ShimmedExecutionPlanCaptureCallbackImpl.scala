@@ -16,12 +16,16 @@
 
 package org.apache.spark.sql.rapids
 
+import java.io.{PrintWriter, StringWriter}
+
 import scala.collection.convert.ImplicitConversions.`collection AsScalaIterable`
 import scala.collection.mutable.{ArrayBuffer, Map => MutableMap}
 import scala.util.Try
+import scala.util.control.NonFatal
 import scala.util.matching.Regex
 
-import com.nvidia.spark.rapids.{GpuCpuBridgeExpression, PlanShims, PlanUtils, ShimLoaderTemp}
+import com.nvidia.spark.rapids.{GpuCpuBridgeExpression, PlanShims, PlanUtils, ShimLoaderTemp,
+  TestPlanValidator}
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.Expression
@@ -39,10 +43,19 @@ import org.apache.spark.sql.execution.exchange.{ReusedExchangeExec, ShuffleExcha
 class ShimmedExecutionPlanCaptureCallbackImpl extends ExecutionPlanCaptureCallbackBase {
   private[this] var shouldCapture: Boolean = false
   private[this] val execPlans: ArrayBuffer[SparkPlan] = ArrayBuffer.empty
+  private[this] var shouldValidate: Boolean = false
+  private[this] val validationPlans: ArrayBuffer[(String, SparkPlan)] = ArrayBuffer.empty
 
   override def captureIfNeeded(qe: QueryExecution): Unit = synchronized {
     if (shouldCapture) {
       execPlans.append(qe.executedPlan)
+    }
+  }
+
+  override def captureForValidationIfNeeded(funcName: String, qe: QueryExecution): Unit =
+      synchronized {
+    if (shouldValidate) {
+      validationPlans.append((funcName, qe.executedPlan))
     }
   }
 
@@ -56,6 +69,23 @@ class ShimmedExecutionPlanCaptureCallbackImpl extends ExecutionPlanCaptureCallba
     synchronized {
       execPlans.clear()
       shouldCapture = true
+    }
+  }
+
+  override def startValidation(timeoutMillis: Long): Unit = {
+    try {
+      SparkSession.active.sparkContext.listenerBus.waitUntilEmpty(timeoutMillis)
+      synchronized {
+        validationPlans.clear()
+        shouldValidate = true
+      }
+    } catch {
+      case t: Throwable =>
+        synchronized {
+          shouldValidate = false
+          validationPlans.clear()
+        }
+        throw t
     }
   }
 
@@ -80,6 +110,38 @@ class ShimmedExecutionPlanCaptureCallbackImpl extends ExecutionPlanCaptureCallba
         shouldCapture = false
         execPlans.clear()
       }
+    }
+  }
+
+  override def getValidationErrorWithTimeout(timeoutMillis: Long): String = {
+    try {
+      SparkSession.active.sparkContext.listenerBus.waitUntilEmpty(timeoutMillis)
+      val capturedPlans = synchronized {
+        shouldValidate = false
+        val plans = validationPlans.toArray
+        validationPlans.clear()
+        plans
+      }
+      capturedPlans.iterator.map { case (funcName, plan) =>
+        getValidationError(funcName, plan)
+      }.find(_ != null).orNull
+    } finally {
+      synchronized {
+        shouldValidate = false
+        validationPlans.clear()
+      }
+    }
+  }
+
+  private def getValidationError(funcName: String, plan: SparkPlan): String = {
+    try {
+      TestPlanValidator.validatePlan(plan)
+      null
+    } catch {
+      case NonFatal(error) =>
+        val writer = new StringWriter()
+        error.printStackTrace(new PrintWriter(writer))
+        s"Final GPU plan validation failed for $funcName:\n$writer\nFinal plan:\n$plan"
     }
   }
 

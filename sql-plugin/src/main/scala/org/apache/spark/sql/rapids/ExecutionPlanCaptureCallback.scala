@@ -24,11 +24,14 @@ import org.apache.spark.sql.util.QueryExecutionListener
 
 trait ExecutionPlanCaptureCallbackBase {
   def captureIfNeeded(qe: QueryExecution): Unit
+  def captureForValidationIfNeeded(funcName: String, qe: QueryExecution): Unit
   def startCapture(): Unit
   def startCapture(timeoutMillis: Long): Unit
+  def startValidation(timeoutMillis: Long): Unit
   def endCapture(): Unit
   def endCapture(timeoutMillis: Long): Unit
   def getResultsWithTimeout(timeoutMs: Long = 10000): Array[SparkPlan]
+  def getValidationErrorWithTimeout(timeoutMillis: Long): String
   def extractExecutedPlan(plan: SparkPlan): SparkPlan
   def assertContains(gpuPlan: SparkPlan, className: String): Unit
   def assertContains(df: DataFrame, gpuClass: String): Unit
@@ -68,11 +71,17 @@ object ExecutionPlanCaptureCallback extends ExecutionPlanCaptureCallbackBase {
   override def captureIfNeeded(qe: QueryExecution): Unit =
     impl.captureIfNeeded(qe)
 
+  override def captureForValidationIfNeeded(funcName: String, qe: QueryExecution): Unit =
+    impl.captureForValidationIfNeeded(funcName, qe)
+
   override def startCapture(): Unit =
     impl.startCapture()
 
   override def startCapture(timeoutMillis: Long): Unit =
     impl.startCapture(timeoutMillis)
+
+  override def startValidation(timeoutMillis: Long): Unit =
+    impl.startValidation(timeoutMillis)
 
   override def endCapture(): Unit = impl.endCapture()
 
@@ -80,6 +89,9 @@ object ExecutionPlanCaptureCallback extends ExecutionPlanCaptureCallbackBase {
 
   override def getResultsWithTimeout(timeoutMs: Long = 10000): Array[SparkPlan] =
     impl.getResultsWithTimeout(timeoutMs)
+
+  override def getValidationErrorWithTimeout(timeoutMillis: Long): String =
+    impl.getValidationErrorWithTimeout(timeoutMillis)
 
   override def extractExecutedPlan(plan: SparkPlan): SparkPlan =
     impl.extractExecutedPlan(plan)
@@ -148,8 +160,10 @@ object ExecutionPlanCaptureCallback extends ExecutionPlanCaptureCallbackBase {
  * Used as a part of testing to capture the executed query plan.
  */
 class ExecutionPlanCaptureCallback extends QueryExecutionListener {
-  override def onSuccess(funcName: String, qe: QueryExecution, durationNs: Long): Unit =
+  override def onSuccess(funcName: String, qe: QueryExecution, durationNs: Long): Unit = {
     ExecutionPlanCaptureCallback.captureIfNeeded(qe)
+    ExecutionPlanCaptureCallback.captureForValidationIfNeeded(funcName, qe)
+  }
 
   override def onFailure(funcName: String, qe: QueryExecution, exception: Exception): Unit =
     ExecutionPlanCaptureCallback.captureIfNeeded(qe)

@@ -162,6 +162,41 @@ object SparkSessionHolder extends Logging {
  */
 trait SparkQueryCompareTestSuite extends AnyFunSuite with BeforeAndAfterAll {
   import SparkSessionHolder.withSparkSession
+
+  private val planValidationTimeoutMillis = 10000L
+
+  private def withFinalPlanValidation[U](f: => U): U = {
+    ExecutionPlanCaptureCallback.startValidation(planValidationTimeoutMillis)
+
+    var result: Option[U] = None
+    var primaryError: Throwable = null
+    try {
+      result = Some(f)
+    } catch {
+      case t: Throwable => primaryError = t
+    }
+
+    var validationError: String = null
+    try {
+      validationError = ExecutionPlanCaptureCallback.getValidationErrorWithTimeout(
+        planValidationTimeoutMillis)
+    } catch {
+      case validationFailure: Throwable if primaryError != null =>
+        primaryError.addSuppressed(validationFailure)
+    }
+
+    if (primaryError != null) {
+      if (validationError != null) {
+        primaryError.addSuppressed(new AssertionError(validationError))
+      }
+      throw primaryError
+    }
+    if (validationError != null) {
+      throw new AssertionError(validationError)
+    }
+    result.get
+  }
+
   def enableCsvConf(): SparkConf = enableCsvConf(new SparkConf())
 
   override def afterAll(): Unit = {
@@ -205,7 +240,7 @@ trait SparkQueryCompareTestSuite extends AnyFunSuite with BeforeAndAfterAll {
       .set(RapidsConf.SQL_ENABLED.key, "true")
       .set(RapidsConf.TEST_CONF.key, "true")
       .set(RapidsConf.EXPLAIN.key, "ALL")
-    withSparkSession(c, f)
+    withSparkSession(c, spark => withFinalPlanValidation(f(spark)))
   }
 
   def withCpuSparkSession[U](f: SparkSession => U, conf: SparkConf = new SparkConf()): U = {
@@ -230,7 +265,7 @@ trait SparkQueryCompareTestSuite extends AnyFunSuite with BeforeAndAfterAll {
         "org.apache.spark.sql.rapids.ExecutionPlanCaptureCallback")
       .appName("Spark Rapids plugin Hive related tests")
       .getOrCreate()
-    f(spark)
+    withFinalPlanValidation(f(spark))
   }
 
   def compare(expected: Any, actual: Any, epsilon: Double = 0.0): Boolean = {

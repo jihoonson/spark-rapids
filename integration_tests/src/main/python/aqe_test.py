@@ -19,13 +19,36 @@ from asserts import assert_gpu_and_cpu_are_equal_collect, assert_cpu_and_gpu_are
 from conftest import is_databricks_runtime, is_not_utc
 from data_gen import *
 from spark_session import is_spark_400_or_later
-from marks import ignore_order, allow_non_gpu
-from spark_session import with_cpu_session, is_databricks113_or_later, is_databricks_version, is_databricks_version_or_later
+from marks import ignore_order, allow_non_gpu, validate_execs_in_gpu_plan
+from spark_session import with_cpu_session, with_gpu_session, is_databricks113_or_later, \
+    is_databricks_version, is_databricks_version_or_later
 
 # allow non gpu when time zone is non-UTC because of https://github.com/NVIDIA/spark-rapids/issues/9653'
 not_utc_aqe_allow=['ShuffleExchangeExec', 'HashAggregateExec'] if is_not_utc() else []
 
 _adaptive_conf = { "spark.sql.adaptive.enabled": "true" }
+
+
+@validate_execs_in_gpu_plan("MissingFromFinalPlan")
+def test_aqe_final_plan_validation_failure_reaches_python():
+    with pytest.raises(AssertionError, match="MissingFromFinalPlan"):
+        with_gpu_session(
+            lambda spark: spark.range(10).repartition(2).count(),
+            conf=_adaptive_conf)
+
+
+@validate_execs_in_gpu_plan("MissingAfterPrimaryError")
+def test_aqe_query_error_remains_primary_over_plan_validation():
+    class ExpectedError(Exception):
+        pass
+
+    def run_and_fail(spark):
+        spark.range(10).repartition(2).count()
+        raise ExpectedError("primary query error")
+
+    with pytest.raises(ExpectedError, match="primary query error"):
+        with_gpu_session(run_and_fail, conf=_adaptive_conf)
+
 
 def create_skew_df(spark, length):
     root = spark.range(0, length)
