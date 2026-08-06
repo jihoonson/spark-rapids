@@ -134,6 +134,27 @@ class AdaptiveQueryExecSuite
     }, conf)
   }
 
+  test("retained query executions are validated without listener state") {
+    val conf = new SparkConf().set("spark.sql.adaptive.enabled", "true")
+    withGpuSparkSession({ spark =>
+      // Close the validation scope installed by withGpuSparkSession so this query is
+      // validated exclusively through the stateless direct API.
+      assert(ExecutionPlanCaptureCallback.getValidationErrorWithTimeout(10000) == null)
+
+      spark.conf.set(RapidsConf.TEST_VALIDATE_EXECS_ONGPU.key, "MissingFromDirectValidation")
+      val df = spark.range(10).repartition(2)
+      val queryExecution = df.queryExecution
+      df.collect()
+
+      val validationError = ExecutionPlanCaptureCallback.validateQueryExecution(
+        "directValidation", queryExecution)
+      assert(validationError != null)
+      assert(validationError.contains("Final GPU plan validation failed for directValidation"))
+      assert(validationError.contains("AdaptiveSparkPlan isFinalPlan=true"))
+      assert(validationError.contains("MissingFromDirectValidation"))
+    }, conf)
+  }
+
   test("Scala GPU session propagates completed AQE plan validation failures") {
     val conf = new SparkConf()
       .set("spark.sql.adaptive.enabled", "true")

@@ -137,6 +137,10 @@ class ShimmedExecutionPlanCaptureCallbackImpl extends ExecutionPlanCaptureCallba
     }
   }
 
+  override def validateQueryExecution(funcName: String, qe: QueryExecution): String = {
+    getValidationError(funcName, qe.executedPlan)
+  }
+
   private def getValidationError(funcName: String, plan: SparkPlan): String = {
     try {
       TestPlanValidator.validatePlan(plan)

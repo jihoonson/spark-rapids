@@ -15,7 +15,8 @@
 import pytest
 from pyspark.sql.functions import when, col, current_date, current_timestamp
 from pyspark.sql.types import *
-from asserts import assert_gpu_and_cpu_are_equal_collect, assert_cpu_and_gpu_are_equal_collect_with_capture
+from asserts import assert_gpu_and_cpu_are_equal_collect, \
+    assert_cpu_and_gpu_are_equal_collect_with_capture, _prep_func_for_compare
 from conftest import is_databricks_runtime, is_not_utc
 from data_gen import *
 from spark_session import is_spark_400_or_later
@@ -27,6 +28,7 @@ from spark_session import with_cpu_session, with_gpu_session, is_databricks113_o
 not_utc_aqe_allow=['ShuffleExchangeExec', 'HashAggregateExec'] if is_not_utc() else []
 
 _adaptive_conf = { "spark.sql.adaptive.enabled": "true" }
+_validate_execs_conf = "spark.rapids.sql.test.validateExecsInGpuPlan"
 
 
 @validate_execs_in_gpu_plan("MissingFromFinalPlan")
@@ -48,6 +50,57 @@ def test_aqe_query_error_remains_primary_over_plan_validation():
 
     with pytest.raises(ExpectedError, match="primary query error"):
         with_gpu_session(run_and_fail, conf=_adaptive_conf)
+
+
+def test_aqe_first_action_validation_error_reaches_python():
+    def run_actions(spark):
+        spark.conf.set(_validate_execs_conf, "MissingFromFirstAction")
+        spark.range(10).repartition(2).count()
+        spark.conf.set(_validate_execs_conf, "MissingFromSecondAction")
+        spark.range(20).repartition(2).count()
+
+    with pytest.raises(AssertionError) as error:
+        with_gpu_session(run_actions, conf=_adaptive_conf)
+
+    assert "MissingFromFirstAction" in str(error.value)
+    assert "MissingFromSecondAction" not in str(error.value)
+
+
+def test_aqe_validation_state_is_cleared_between_gpu_sessions():
+    def run_with_validation_error(spark):
+        spark.conf.set(_validate_execs_conf, "MissingFromPreviousSession")
+        return spark.range(10).repartition(2).count()
+
+    with pytest.raises(AssertionError, match="MissingFromPreviousSession"):
+        with_gpu_session(run_with_validation_error, conf=_adaptive_conf)
+
+    assert with_gpu_session(
+        lambda spark: spark.range(1).count(), conf=_adaptive_conf) == 1
+
+
+@validate_execs_in_gpu_plan("MissingFromIteratorFinalPlan")
+def test_to_local_iterator_validates_after_normal_exhaustion():
+    bring_back, _ = _prep_func_for_compare(lambda spark: spark.range(1), "ITERATOR")
+    iterator = with_gpu_session(bring_back, conf=_adaptive_conf)
+
+    assert next(iterator).id == 0
+    with pytest.raises(AssertionError, match="MissingFromIteratorFinalPlan"):
+        next(iterator)
+
+
+@validate_execs_in_gpu_plan("MissingAfterIteratorError")
+def test_to_local_iterator_error_remains_primary():
+    def make_failing_df(spark):
+        return spark.range(2, numPartitions=2).selectExpr(
+            "IF(id = 0, id, raise_error('iterator primary error')) AS id")
+
+    bring_back, _ = _prep_func_for_compare(make_failing_df, "ITERATOR")
+    iterator = with_gpu_session(bring_back, conf=_adaptive_conf)
+
+    assert next(iterator).id == 0
+    with pytest.raises(Exception, match="iterator primary error") as error:
+        next(iterator)
+    assert not isinstance(error.value, AssertionError)
 
 
 def create_skew_df(spark, length):

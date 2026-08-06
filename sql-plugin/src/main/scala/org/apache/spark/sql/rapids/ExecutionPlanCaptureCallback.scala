@@ -32,6 +32,7 @@ trait ExecutionPlanCaptureCallbackBase {
   def endCapture(timeoutMillis: Long): Unit
   def getResultsWithTimeout(timeoutMs: Long = 10000): Array[SparkPlan]
   def getValidationErrorWithTimeout(timeoutMillis: Long): String
+  def validateQueryExecution(funcName: String, qe: QueryExecution): String
   def extractExecutedPlan(plan: SparkPlan): SparkPlan
   def assertContains(gpuPlan: SparkPlan, className: String): Unit
   def assertContains(df: DataFrame, gpuClass: String): Unit
@@ -92,6 +93,9 @@ object ExecutionPlanCaptureCallback extends ExecutionPlanCaptureCallbackBase {
 
   override def getValidationErrorWithTimeout(timeoutMillis: Long): String =
     impl.getValidationErrorWithTimeout(timeoutMillis)
+
+  override def validateQueryExecution(funcName: String, qe: QueryExecution): String =
+    impl.validateQueryExecution(funcName, qe)
 
   override def extractExecutedPlan(plan: SparkPlan): SparkPlan =
     impl.extractExecutedPlan(plan)
