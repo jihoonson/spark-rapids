@@ -195,11 +195,11 @@ class TestPlanValidatorSuite extends AnyFunSuite {
     when(adaptive.getTagValue(
       any[TreeNodeTag[TestPlanValidator.ValidationContext]])).thenReturn(None)
 
-    val plans = TestPlanValidator.collectPlans(adaptive)
-    assert(plans.exists(_ eq adaptive))
-    assert(plans.exists(_ eq finalPlan))
-    assert(plans.exists(_ eq stage))
-    assert(plans.exists(_ eq required))
+    val planNodes = TestPlanValidator.collectPlanNodes(adaptive)
+    assert(planNodes.exists(_ eq adaptive))
+    assert(planNodes.exists(_ eq finalPlan))
+    assert(planNodes.exists(_ eq stage))
+    assert(planNodes.exists(_ eq required))
     TestPlanValidator.validatePlan(adaptive)
   }
 
@@ -217,12 +217,12 @@ class TestPlanValidatorSuite extends AnyFunSuite {
     val root = PlanValidationBinaryExec(
       PlanValidationBinaryExec(reusedExchangeLeft, reusedExchangeRight),
       PlanValidationBinaryExec(reusedSubqueryLeft, reusedSubqueryRight))
-    val plans = TestPlanValidator.collectPlans(root)
+    val planNodes = TestPlanValidator.collectPlanNodes(root)
 
-    assert(plans.count(_ eq exchange) == 1)
-    assert(plans.count(_ eq exchangeLeaf) == 1)
-    assert(plans.count(_ eq subquery) == 1)
-    assert(plans.count(_ eq subqueryLeaf) == 1)
+    assert(planNodes.count(_ eq exchange) == 1)
+    assert(planNodes.count(_ eq exchangeLeaf) == 1)
+    assert(planNodes.count(_ eq subquery) == 1)
+    assert(planNodes.count(_ eq subqueryLeaf) == 1)
   }
 
   test("collects subquery plans referenced from expressions") {
@@ -233,10 +233,10 @@ class TestPlanValidatorSuite extends AnyFunSuite {
       Literal(1), reusedSubquery, NamedExpression.newExprId)
     val root = PlanValidationExpressionExec(Seq(inSubquery))
 
-    val plans = TestPlanValidator.collectPlans(root)
-    assert(plans.exists(_ eq reusedSubquery))
-    assert(plans.exists(_ eq subquery))
-    assert(plans.exists(_ eq subqueryLeaf))
+    val planNodes = TestPlanValidator.collectPlanNodes(root)
+    assert(planNodes.exists(_ eq reusedSubquery))
+    assert(planNodes.exists(_ eq subquery))
+    assert(planNodes.exists(_ eq subqueryLeaf))
 
     TestPlanValidator.tagForValidation(
       root, context("expression-subquery", "PlanValidationRequiredLeafExec"))

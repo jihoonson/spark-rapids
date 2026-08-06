@@ -59,12 +59,12 @@ object TestPlanValidator {
           val finalRoot = unwrapFinalRoot(plan)
           // Preserve the existing test-mode canonicalization check.
           finalRoot.canonicalized
-          val allPlans = collectPlans(finalRoot)
-          allPlans.foreach(validatePlanNode(_, conf, context.adaptiveEnabled))
-          validateExecsInGpuPlan(finalRoot, allPlans, conf)
+          val allPlanNodes = collectPlanNodes(finalRoot)
+          allPlanNodes.foreach(validatePlanNode(_, conf, context.adaptiveEnabled))
+          validateExecsInGpuPlan(finalRoot, allPlanNodes, conf)
         }
       case None =>
-        if (collectPlans(plan).exists(_.isInstanceOf[GpuExec])) {
+        if (collectPlanNodes(plan).exists(_.isInstanceOf[GpuExec])) {
           throw new IllegalStateException(
             "GPU plan is missing its test validation configuration context")
         }
@@ -246,7 +246,7 @@ object TestPlanValidator {
     }
   }
 
-  private[rapids] def collectPlans(plan: SparkPlan): Seq[SparkPlan] = {
+  private[rapids] def collectPlanNodes(plan: SparkPlan): Seq[SparkPlan] = {
     val visited = new IdentityHashMap[SparkPlan, java.lang.Boolean]()
     val queue = mutable.Queue[SparkPlan](plan)
     val plans = mutable.ArrayBuffer[SparkPlan]()
