@@ -794,11 +794,15 @@ class GpuTransitionOverrides(sparkSession: SparkSession = null) extends Rule[Spa
   override def apply(sparkPlan: SparkPlan): SparkPlan =
       GpuOverrideUtil.withActiveSession(sparkSession) {
     GpuOverrideUtil.tryOverride { plan =>
-    val validationContext = TestPlanValidator.captureValidationContext(plan)
-    this.rapidsConf = new RapidsConf(validationContext.conf)
+    this.rapidsConf = new RapidsConf(plan.conf)
     if (rapidsConf.isSqlEnabled && rapidsConf.isSqlExecuteOnGPU) {
       GpuOverrides.logDuration(rapidsConf.shouldExplain,
         t => f"GPU plan transition optimization took $t%.2f ms") {
+        val validationContext = if (rapidsConf.isTestEnabled) {
+          TestPlanValidator.captureValidationContext(plan)
+        } else {
+          TestPlanValidator.validationDisabledContext
+        }
         var updatedPlan = DeltaProvider().pruneFileMetadata(plan)
         if (DeltaProvider().isPushDVPredicateDownEnabled(rapidsConf)) {
           updatedPlan = DeltaProvider().tryPushDVPredicateDownToScan(updatedPlan)

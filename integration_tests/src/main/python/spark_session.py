@@ -177,7 +177,7 @@ def with_gpu_session(func, conf={}):
         primary_traceback = None
         try:
             result = func(spark)
-        except BaseException as error:
+        except Exception as error:
             primary_error = error
             primary_traceback = error.__traceback__
 
@@ -185,7 +185,7 @@ def with_gpu_session(func, conf={}):
         try:
             validation_error = callback.getValidationErrorWithTimeout(
                 _PLAN_VALIDATION_TIMEOUT_MS)
-        except BaseException:
+        except Exception:
             if primary_error is None:
                 raise
             logging.exception(

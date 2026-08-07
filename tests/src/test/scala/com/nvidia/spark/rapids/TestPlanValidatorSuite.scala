@@ -115,7 +115,21 @@ class TestPlanValidatorSuite extends AnyFunSuite {
         "PlanValidationRequiredLeafExec",
         "PlanValidationExchangeExec").mkString(","),
       RapidsConf.TEST_VALIDATE_EXECS_ONGPU.key -> requiredExec,
-      "spark.rapids.sql.test.validation.marker" -> marker), adaptiveEnabled = false)
+      "spark.rapids.sql.test.validation.marker" -> marker),
+      adaptiveEnabled = false,
+      shouldValidate = true)
+  }
+
+  test("disabled context skips validation without weakening missing-context detection") {
+    val gpuPlan = PlanValidationGpuExec(Seq.empty)
+    val error = intercept[IllegalStateException] {
+      TestPlanValidator.validatePlan(gpuPlan)
+    }
+    assert(error.getMessage.contains("missing its test validation configuration context"))
+
+    TestPlanValidator.tagForValidation(
+      gpuPlan, TestPlanValidator.validationDisabledContext)
+    TestPlanValidator.validatePlan(gpuPlan)
   }
 
   test("nearest context wins when a later planning pass wraps an older pass") {

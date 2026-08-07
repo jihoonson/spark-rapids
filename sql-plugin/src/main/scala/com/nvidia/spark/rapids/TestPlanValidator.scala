@@ -36,13 +36,22 @@ import org.apache.spark.sql.execution.joins.{BroadcastHashJoinExec, BroadcastNes
 
 /** Test-only validation of the finalized physical plan. */
 object TestPlanValidator {
-  case class ValidationContext(conf: Map[String, String], adaptiveEnabled: Boolean)
+  case class ValidationContext(
+      conf: Map[String, String],
+      adaptiveEnabled: Boolean,
+      shouldValidate: Boolean)
+
+  private[rapids] val validationDisabledContext =
+    ValidationContext(Map.empty, adaptiveEnabled = false, shouldValidate = false)
 
   private val validationContextTag =
     TreeNodeTag[ValidationContext]("rapids.test.planValidationContext")
 
   def captureValidationContext(plan: SparkPlan): ValidationContext = {
-    ValidationContext(plan.conf.getAllConfs.toMap, plan.conf.adaptiveExecutionEnabled)
+    val rapidsConfs = plan.conf.getAllConfs.filter { case (key, _) =>
+      key.startsWith("spark.rapids.")
+    }.toMap
+    ValidationContext(rapidsConfs, plan.conf.adaptiveExecutionEnabled, shouldValidate = true)
   }
 
   def tagForValidation(plan: SparkPlan, context: ValidationContext): SparkPlan = {
@@ -53,7 +62,7 @@ object TestPlanValidator {
   /** Validate a completed physical plan using the configuration that produced it. */
   def validatePlan(plan: SparkPlan): Unit = {
     resolveValidationContext(plan) match {
-      case Some(context) =>
+      case Some(context) if context.shouldValidate =>
         val conf = new RapidsConf(context.conf)
         if (conf.isSqlEnabled && conf.isSqlExecuteOnGPU && conf.isTestEnabled) {
           val finalRoot = unwrapFinalRoot(plan)
@@ -63,6 +72,7 @@ object TestPlanValidator {
           allPlanNodes.foreach(validatePlanNode(_, conf, context.adaptiveEnabled))
           validateExecsInGpuPlan(finalRoot, allPlanNodes, conf)
         }
+      case Some(_) =>
       case None =>
         if (collectPlanNodes(plan).exists(_.isInstanceOf[GpuExec])) {
           throw new IllegalStateException(

@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from unittest.mock import Mock
+
 import pytest
 
 from asserts import _prep_func_for_compare
 from marks import validate_execs_in_gpu_plan
+import spark_session
 from spark_session import with_gpu_session
 
 
@@ -24,6 +27,39 @@ from spark_session import with_gpu_session
 
 _adaptive_conf = {"spark.sql.adaptive.enabled": "true"}
 _validate_execs_conf = "spark.rapids.sql.test.validateExecsInGpuPlan"
+
+
+def _install_fake_validation_callback(monkeypatch, callback):
+    spark = Mock()
+    rapids = spark.sparkContext._jvm.org.apache.spark.sql.rapids
+    rapids.ExecutionPlanCaptureCallback = callback
+    monkeypatch.setattr(
+        spark_session, "with_spark_session", lambda func, conf: func(spark))
+
+
+def test_gpu_session_does_not_catch_keyboard_interrupt(monkeypatch):
+    callback = Mock()
+    _install_fake_validation_callback(monkeypatch, callback)
+
+    def interrupt(_):
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        with_gpu_session(interrupt)
+
+    callback.getValidationErrorWithTimeout.assert_not_called()
+
+
+def test_gpu_session_does_not_suppress_keyboard_interrupt_from_validation(monkeypatch):
+    callback = Mock()
+    callback.getValidationErrorWithTimeout.side_effect = KeyboardInterrupt
+    _install_fake_validation_callback(monkeypatch, callback)
+
+    def fail(_):
+        raise RuntimeError("primary test error")
+
+    with pytest.raises(KeyboardInterrupt):
+        with_gpu_session(fail)
 
 
 @validate_execs_in_gpu_plan("MissingFromFinalPlan")

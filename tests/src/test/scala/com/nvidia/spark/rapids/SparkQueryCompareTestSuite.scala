@@ -22,6 +22,7 @@ import java.util.{Locale, TimeZone, UUID}
 
 import scala.reflect.ClassTag
 import scala.util.{Failure, Try}
+import scala.util.control.NonFatal
 
 import org.apache.hadoop.fs.FileUtil
 import org.scalatest.{Assertion, BeforeAndAfterAll}
@@ -173,7 +174,7 @@ trait SparkQueryCompareTestSuite extends AnyFunSuite with BeforeAndAfterAll {
     try {
       result = Some(f)
     } catch {
-      case t: Throwable => primaryError = t
+      case NonFatal(t) => primaryError = t
     }
 
     var validationError: String = null
@@ -181,7 +182,7 @@ trait SparkQueryCompareTestSuite extends AnyFunSuite with BeforeAndAfterAll {
       validationError = ExecutionPlanCaptureCallback.getValidationErrorWithTimeout(
         planValidationTimeoutMillis)
     } catch {
-      case validationFailure: Throwable if primaryError != null =>
+      case NonFatal(validationFailure) if primaryError != null =>
         primaryError.addSuppressed(validationFailure)
     }
 
