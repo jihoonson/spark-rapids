@@ -218,18 +218,15 @@ class ParseDateTimeSuite extends SparkQueryCompareTestSuite with BeforeAndAfterE
       plans.append(plan)
     })
 
-    val e = intercept[IllegalArgumentException] {
-      val df = withGpuSparkSession(spark => {
+    withGpuSparkSession(spark => {
+      val df =
         datesAsStrings(spark)
           .repartition(2)
           .withColumn("c1", to_date(col("c0"), "F"))
-      }, CORRECTED_TIME_PARSER_POLICY)
-      df.collect()
-    }
-    // With the bridge feature, the error message might be about bridge expressions
-    // instead of ProjectExec, so we check for both possibilities
-    assert(e.getMessage.contains("Part of the plan is not columnar") ||
-      e.getMessage.contains("GpuCpuBridgeExpression contains disallowed CPU expressions"))
+      // Trigger RAPIDS physical planning so the conversion failure is recorded without
+      // executing Spark's invalid datetime pattern.
+      df.queryExecution.executedPlan
+    }, CORRECTED_TIME_PARSER_POLICY)
 
     val planStr = plans.last.toString
     assert(planStr.contains("Failed to convert Unsupported character: F"))
