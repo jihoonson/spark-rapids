@@ -92,6 +92,16 @@ private case class PlanValidationDisallowedExec() extends LeafExecNode {
     throw new UnsupportedOperationException("PlanValidationDisallowedExec is not executable")
 }
 
+// Test double for the structural wrapper supplied by the optional Delta module.
+private case class RapidsDeltaWriteExec(child: SparkPlan) extends UnaryExecNode {
+  override def output: Seq[Attribute] = child.output
+  override def doCanonicalize(): SparkPlan = this
+  override protected def doExecute(): RDD[InternalRow] =
+    throw new UnsupportedOperationException("RapidsDeltaWriteExec is not executable")
+  override protected def withNewChildInternal(newChild: SparkPlan): SparkPlan =
+    copy(child = newChild)
+}
+
 private case class PlanValidationExchangeExec(child: SparkPlan) extends Exchange {
   override def doCanonicalize(): SparkPlan = this
   override protected def doExecute(): RDD[InternalRow] =
@@ -277,5 +287,18 @@ class TestPlanValidatorSuite extends AnyFunSuite {
       TestPlanValidator.validatePlan(expressionPlan)
     }
     assert(expressionError.getMessage.contains("Add"))
+  }
+
+  test("Delta write wrapper is exempt while its child is still validated") {
+    val gpuPlan = TestPlanValidator.tagForValidation(
+      RapidsDeltaWriteExec(PlanValidationGpuExec(Seq.empty)), context("delta-write-wrapper"))
+    TestPlanValidator.validatePlan(gpuPlan)
+
+    val cpuPlan = TestPlanValidator.tagForValidation(
+      RapidsDeltaWriteExec(PlanValidationDisallowedExec()), context("delta-write-child"))
+    val error = intercept[IllegalArgumentException] {
+      TestPlanValidator.validatePlan(cpuPlan)
+    }
+    assert(error.getMessage.contains("PlanValidationDisallowedExec"))
   }
 }

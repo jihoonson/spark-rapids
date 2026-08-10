@@ -192,6 +192,9 @@ object TestPlanValidator {
           _: ReusedExchangeExec | _: ReusedSubqueryExec | _: SubqueryExec |
           _: WholeStageCodegenExec | _: InputAdapter =>
         // Structural wrappers are validated through their underlying plans.
+      case p if PlanUtils.sameClass(p, "RapidsDeltaWriteExec") =>
+        // The optional Delta module uses this command stub only to keep AQE below a parent node.
+        // Its child is still collected and validated.
       case p if SparkShimImpl.isAqePlan(p) =>
         // Other AQE wrappers, such as AQEShuffleReadExec, stay on CPU.
       case p if !(PlanShims.extractExecutedPlan(p) eq p) =>
