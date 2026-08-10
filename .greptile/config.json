@@ -140,12 +140,6 @@
       "severity": "medium"
     },
     {
-      "id": "delta-lake-databricks-ci-tag",
-      "rule": "If a pull request changes any Delta Lake-related code, tests, shims, or build wiring, its title must contain the exact '[databricks]' tag. Flag a missing tag even when the changed path would automatically trigger Databricks CI.",
-      "scope": ["delta-lake/**", "scala2.13/delta-lake/**", "sql-plugin/**", "integration_tests/**", "tests/**", "pom.xml", "**/pom.xml", "build/**", "jenkins/**"],
-      "severity": "high"
-    },
-    {
       "id": "performance-checklist-required",
       "rule": "Unless a pull request is documentation-only, test-only, or clearly a minor bug fix, assume it may have performance implications. If the pull request description selects 'Not required' in the Performance checklist, flag it. When uncertain whether an exception applies, flag the issue rather than overlooking a possible performance impact.",
       "scope": ["**"],

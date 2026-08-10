@@ -13,7 +13,6 @@ This document provides context for AI coding agents (Claude Code, GitHub Copilot
 - **No rebase during review** — if a PR is under review, do not rebase; merge the base branch instead to preserve reviewer comment context
 - **Scala 2.13 sync** — after modifying any `pom.xml`, run `./build/make-scala-version-build-files.sh 2.13`
 - **PR title tags** — `[databricks]` triggers Databricks pre-merge CI; `[skip ci]` for doc-only changes. Databricks CI auto-runs only when the diff touches a `sql-plugin/src/main/…db/` shim dir or a path containing `databricks`; otherwise it does **not** run. Add `[databricks]` manually when a change could behave differently on Databricks without touching those paths — e.g. integration tests that depend on filesystem/path semantics (local vs DBFS/`abfss`, `file://` scheme, `os.walk`/`os.path`), or optimizer/plan-string assertions (alias names and plan rendering differ on DBR) — since the Linux pre-merge will not catch DBR-only failures
-- **Delta Lake PR title tag** — every PR that changes Delta Lake-related code, tests, shims, or build wiring must include the exact `[databricks]` tag in its title, even when a changed path automatically triggers Databricks CI
 - **Performance checklist** — unless a PR is documentation-only, test-only, or clearly a minor bug fix, assume it may have performance implications. If its PR description selects `Not required` in the Performance checklist, flag it. When uncertain whether an exception applies, flag the issue rather than overlooking a possible performance impact
 
 ## Build Commands

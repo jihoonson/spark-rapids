@@ -27,8 +27,7 @@ these upstream repositories to verify correctness:
 - [ ] H6: Magic numbers — unexplained numeric literals without named constants or comments
 - [ ] H7: Pre-merge CI gaps — only selected shims run unit tests; [databricks] needed for DB CI; feature-gated tests need explicit enable; limited Scala 2.13 coverage
 - [ ] H8: Upstream dependencies — SNAPSHOT changes from cudf-spark-jni/cudf may break; verify API usage against upstream repos
-- [ ] H10: Delta Lake Databricks coverage — any PR that changes Delta Lake-related code, tests, shims, or build wiring must have the exact `[databricks]` tag in its title; report a missing tag as a high-severity finding even when the changed path automatically triggers Databricks CI
-- [ ] H11: Performance checklist — unless the PR is documentation-only, test-only, or clearly a minor bug fix, assume it may have performance implications; report `Performance: Not required` in the PR description as a high-severity finding, and when uncertain, flag rather than overlook a possible performance impact
+- [ ] H10: Performance checklist — unless the PR is documentation-only, test-only, or clearly a minor bug fix, assume it may have performance implications; report `Performance: Not required` in the PR description as a high-severity finding, and when uncertain, flag rather than overlook a possible performance impact
 
 ## Do NOT Comment On
 
