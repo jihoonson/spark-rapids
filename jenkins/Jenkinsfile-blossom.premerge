@@ -584,7 +584,7 @@ boolean databricksTestNeeded() {
             # - numbered shim directories such as spark330db/ and spark350db143/
             # - all Delta Lake paths such as delta-lake/delta-33x/ and scala2.13/delta-lake/
             # - any path containing "databricks", such as jenkins/databricks/
-            git --no-pager diff --name-only ${BASE_REF} HEAD | grep -lE 'sql-plugin/src/main/.*[0-9x-]db[0-9]*/|(^|/)delta-lake/|databricks' || true
+            git --no-pager diff --name-only ${BASE_REF} HEAD | grep -E 'sql-plugin/src/main/.*[0-9x-]db[0-9]*/|(^|/)delta-lake/|databricks' || true
         ''', returnStdout: true).trim()
 
     if (output) {
