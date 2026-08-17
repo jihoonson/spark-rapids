@@ -22,7 +22,6 @@ import java.util.{Locale, TimeZone, UUID}
 
 import scala.reflect.ClassTag
 import scala.util.{Failure, Try}
-import scala.util.control.NonFatal
 
 import org.apache.hadoop.fs.FileUtil
 import org.scalatest.{Assertion, BeforeAndAfterAll}
@@ -30,7 +29,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 import org.apache.spark.SparkConf
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.{Dataset, Row}
+import org.apache.spark.sql.Row
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.command.{CreateViewCommand, ExecutedCommandExec}
 import org.apache.spark.sql.internal.SQLConf
@@ -164,48 +163,6 @@ object SparkSessionHolder extends Logging {
 trait SparkQueryCompareTestSuite extends AnyFunSuite with BeforeAndAfterAll {
   import SparkSessionHolder.withSparkSession
 
-  private val planValidationTimeoutMillis = 10000L
-
-  private def withFinalPlanValidation[U](f: => U): U = {
-    ExecutionPlanCaptureCallback.startValidation(planValidationTimeoutMillis)
-
-    var result: Option[U] = None
-    var primaryError: Throwable = null
-    try {
-      val callbackResult = f
-      callbackResult match {
-        case _: Dataset[_] =>
-          throw new IllegalStateException(
-            "A Dataset must not be returned from a GPU Spark session callback because its " +
-              "execution would escape final-plan validation. Execute the action inside the " +
-              "callback and return the materialized result instead.")
-        case _ => result = Some(callbackResult)
-      }
-    } catch {
-      case NonFatal(t) => primaryError = t
-    }
-
-    var validationError: String = null
-    try {
-      validationError = ExecutionPlanCaptureCallback.getValidationErrorWithTimeout(
-        planValidationTimeoutMillis)
-    } catch {
-      case NonFatal(validationFailure) if primaryError != null =>
-        primaryError.addSuppressed(validationFailure)
-    }
-
-    if (primaryError != null) {
-      if (validationError != null) {
-        primaryError.addSuppressed(new AssertionError(validationError))
-      }
-      throw primaryError
-    }
-    if (validationError != null) {
-      throw new AssertionError(validationError)
-    }
-    result.get
-  }
-
   def enableCsvConf(): SparkConf = enableCsvConf(new SparkConf())
 
   override def afterAll(): Unit = {
@@ -249,7 +206,7 @@ trait SparkQueryCompareTestSuite extends AnyFunSuite with BeforeAndAfterAll {
       .set(RapidsConf.SQL_ENABLED.key, "true")
       .set(RapidsConf.TEST_CONF.key, "true")
       .set(RapidsConf.EXPLAIN.key, "ALL")
-    withSparkSession(c, spark => withFinalPlanValidation(f(spark)))
+    withSparkSession(c, spark => TestUtils.withFinalPlanValidation(f(spark)))
   }
 
   def withCpuSparkSession[U](f: SparkSession => U, conf: SparkConf = new SparkConf()): U = {
@@ -274,7 +231,7 @@ trait SparkQueryCompareTestSuite extends AnyFunSuite with BeforeAndAfterAll {
         "org.apache.spark.sql.rapids.ExecutionPlanCaptureCallback")
       .appName("Spark Rapids plugin Hive related tests")
       .getOrCreate()
-    withFinalPlanValidation(f(spark))
+    TestUtils.withFinalPlanValidation(f(spark))
   }
 
   def compare(expected: Any, actual: Any, epsilon: Double = 0.0): Boolean = {

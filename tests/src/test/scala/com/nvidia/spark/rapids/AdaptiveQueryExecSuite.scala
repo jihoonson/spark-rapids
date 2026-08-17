@@ -176,6 +176,21 @@ class AdaptiveQueryExecSuite
     assertResult(1L)(withGpuSparkSession(_.range(1).count()))
   }
 
+  test("TestUtils GPU session propagates completed AQE plan validation failures") {
+    val conf = new SparkConf()
+      .set("spark.sql.adaptive.enabled", "true")
+      .set(RapidsConf.TEST_CONF.key, "true")
+      .set(RapidsConf.TEST_VALIDATE_EXECS_ONGPU.key, "MissingFromTestUtilsHarness")
+
+    val error = intercept[AssertionError] {
+      TestUtils.withGpuSparkSession(conf) { spark =>
+        spark.range(10).repartition(2).count()
+      }
+    }
+    assert(error.getMessage.contains("AdaptiveSparkPlan isFinalPlan=true"))
+    assert(error.getMessage.contains("MissingFromTestUtilsHarness"))
+  }
+
   test("GPU planning rules use their captured session when no session is active") {
     val conf = new SparkConf().set("spark.sql.adaptive.enabled", "true")
     withGpuSparkSession({ spark =>
