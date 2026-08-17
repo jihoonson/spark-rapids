@@ -30,7 +30,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 import org.apache.spark.SparkConf
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.Row
+import org.apache.spark.sql.{Dataset, Row}
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.command.{CreateViewCommand, ExecutedCommandExec}
 import org.apache.spark.sql.internal.SQLConf
@@ -172,7 +172,15 @@ trait SparkQueryCompareTestSuite extends AnyFunSuite with BeforeAndAfterAll {
     var result: Option[U] = None
     var primaryError: Throwable = null
     try {
-      result = Some(f)
+      val callbackResult = f
+      callbackResult match {
+        case _: Dataset[_] =>
+          throw new IllegalStateException(
+            "A Dataset must not be returned from a GPU Spark session callback because its " +
+              "execution would escape final-plan validation. Execute the action inside the " +
+              "callback and return the materialized result instead.")
+        case _ => result = Some(callbackResult)
+      }
     } catch {
       case NonFatal(t) => primaryError = t
     }

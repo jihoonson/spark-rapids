@@ -237,11 +237,10 @@ class ParseDateTimeSuite extends SparkQueryCompareTestSuite with BeforeAndAfterE
 
   test("literals: ensure time literals are correct") {
     val conf = new SparkConf()
-    val df = withGpuSparkSession(spark => {
-      spark.sql("SELECT current_date(), current_timestamp(), now() FROM RANGE(1, 10)")
+    val times = withGpuSparkSession(spark => {
+      spark.sql("SELECT current_date(), current_timestamp(), now() FROM RANGE(1, 10)").collect()
     }, conf)
 
-    val times = df.collect()
     val systemCurrentTime = System.currentTimeMillis()
     val res = times.forall(time => {
       val diffDate = systemCurrentTime - time.getDate(0).getTime()
@@ -261,11 +260,10 @@ class ParseDateTimeSuite extends SparkQueryCompareTestSuite with BeforeAndAfterE
 
   private[this] def testTimeWithDiffTimezones(sessionTZStr: String, systemTZStr: String) = {
     withTimeZones(sessionTimeZone = sessionTZStr, systemTimeZone = systemTZStr) { conf =>
-      val df = withGpuSparkSession(spark => {
-        spark.sql("SELECT current_date(), current_timestamp(), now() FROM RANGE(1, 10)")
+      val times = withGpuSparkSession(spark => {
+        spark.sql("SELECT current_date(), current_timestamp(), now() FROM RANGE(1, 10)").collect()
       }, conf)
 
-      val times = df.collect()
       val zonedDateTime = ZonedDateTime.now(ZoneId.of("America/New_York"))
       val res = times.forall(time => {
         val diffDate = zonedDateTime.toLocalDate.toEpochDay - time.getLocalDate(0).toEpochDay

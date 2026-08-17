@@ -167,6 +167,15 @@ class AdaptiveQueryExecSuite
     assert(error.getMessage.contains("MissingFromScalaHarness"))
   }
 
+  test("Scala GPU session rejects a lazy Dataset result") {
+    val error = intercept[IllegalStateException] {
+      withGpuSparkSession(_.range(10))
+    }
+    assert(error.getMessage.contains("Dataset must not be returned"))
+
+    assertResult(1L)(withGpuSparkSession(_.range(1).count()))
+  }
+
   test("GPU planning rules use their captured session when no session is active") {
     val conf = new SparkConf().set("spark.sql.adaptive.enabled", "true")
     withGpuSparkSession({ spark =>
