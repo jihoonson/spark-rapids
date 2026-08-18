@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * Copyright (c) 2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,48 +14,49 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.rapids.delta40x
+package org.apache.spark.sql.delta.rapids.delta42x
+
+import scala.util.Try
 
 import com.nvidia.spark.rapids.RapidsConf
 import com.nvidia.spark.rapids.delta.DeltaProvider
-import com.nvidia.spark.rapids.delta.delta40x.Delta40xProvider
-import com.nvidia.spark.rapids.delta.delta40x.GpuDeltaCatalog
+import com.nvidia.spark.rapids.delta.delta42x.{Delta42xProvider, GpuDeltaCatalog}
 
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.connector.catalog.StagingTableCatalog
 import org.apache.spark.sql.delta.{DeltaOperations, DeltaOptions}
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
-import org.apache.spark.sql.delta.hooks.GpuAutoCompact40x
-import org.apache.spark.sql.delta.rapids.{DeltaRuntimeShimBase, GpuOptimisticTransaction,
-  GpuOptimisticTransactionBase, StartTransactionArg}
+import org.apache.spark.sql.delta.hooks.GpuAutoCompact42x
+import org.apache.spark.sql.delta.rapids.{DeltaRuntimeShimBase, GpuOptimisticTransaction, GpuOptimisticTransactionBase, StartTransactionArg}
 
-/**
- * Delta runtime shim for Delta 4.0.x on Spark 4.0.x.
- *
- * @note This class is instantiated via reflection from DeltaProbeImpl
- */
-class Delta40xRuntimeShim extends DeltaRuntimeShimBase {
+class Delta42xRuntimeShim extends DeltaRuntimeShimBase {
 
-  override def getDeltaProvider: DeltaProvider = Delta40xProvider
+  override def getDeltaProvider: DeltaProvider = Delta42xProvider
 
   override def getGpuDeltaCatalog(
-     cpuCatalog: DeltaCatalog,
-     rapidsConf: RapidsConf): StagingTableCatalog = {
+      cpuCatalog: DeltaCatalog,
+      rapidsConf: RapidsConf): StagingTableCatalog = {
     new GpuDeltaCatalog(cpuCatalog, rapidsConf)
   }
 
   override protected def constructOptimisticTransaction(
       arg: StartTransactionArg): GpuOptimisticTransactionBase =
     new GpuOptimisticTransaction(
-      arg.log, arg.catalogTable, arg.snapshot, arg.conf, GpuAutoCompact40x)
+      arg.log, arg.catalogTable, arg.snapshot, arg.conf, GpuAutoCompact42x)
 
   override def buildWriteOperation(
       mode: SaveMode,
       partitionColumns: Seq[String],
       options: DeltaOptions): DeltaOperations.Operation = {
     DeltaOperations.Write(
-      mode, Option(partitionColumns), options.replaceWhere, options.userMetadata)
+      mode,
+      Option(partitionColumns),
+      options.replaceWhere,
+      options.userMetadata,
+      dynamicPartitionOverwriteOption(options),
+      booleanOption(options.canOverwriteSchema),
+      booleanOption(options.canMergeSchema))
   }
 
   override def buildReplaceTableOperation(
@@ -67,6 +68,24 @@ class Delta40xRuntimeShim extends DeltaRuntimeShimBase {
       clusterBy: Option[Seq[String]],
       isV1SaveAsTableOverwrite: Option[Boolean]): DeltaOperations.Operation = {
     DeltaOperations.ReplaceTable(
-      metadata, isManaged, orCreate, asSelect, options.flatMap(_.userMetadata), clusterBy)
+      metadata,
+      isManaged,
+      orCreate,
+      asSelect,
+      options.flatMap(_.userMetadata),
+      clusterBy,
+      options.flatMap(_.replaceWhere),
+      options.flatMap(dynamicPartitionOverwriteOption),
+      booleanOption(options.exists(_.canOverwriteSchema)),
+      booleanOption(options.exists(_.canMergeSchema)),
+      isV1SaveAsTableOverwrite)
+  }
+
+  private def dynamicPartitionOverwriteOption(options: DeltaOptions): Option[Boolean] = {
+    booleanOption(Try(options.isDynamicPartitionOverwriteMode).getOrElse(false))
+  }
+
+  private def booleanOption(enabled: Boolean): Option[Boolean] = {
+    if (enabled) Some(true) else None
   }
 }

@@ -23,14 +23,11 @@ package org.apache.spark.sql.delta.hooks
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.delta._
-/**
- * Delta 4.1 version-specific implementation of GpuAutoCompact.
- * Delta 4.1 drives post-commit hooks via CommittedTransaction instead of the older live
- * transaction hook signature used by Delta 4.0.
- */
-case object GpuAutoCompact41x extends GpuAutoCompactBase {
 
-  override protected def getTableId(deltaLog: DeltaLog): String = deltaLog.tableId
+/** Delta 4.2 version-specific implementation of GpuAutoCompact. */
+case object GpuAutoCompact42x extends GpuAutoCompactBase {
+
+  override protected def getTableId(deltaLog: DeltaLog): String = deltaLog.unsafeVolatileTableId
 
   override def run(
       spark: SparkSession,

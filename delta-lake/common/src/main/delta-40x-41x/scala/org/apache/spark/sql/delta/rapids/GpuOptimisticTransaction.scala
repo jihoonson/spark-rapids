@@ -37,7 +37,7 @@ import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
 import org.apache.spark.sql.delta.constraints.{Constraint, Constraints}
-import org.apache.spark.sql.delta.hooks.GpuAutoCompact
+import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.rapids.{DeltaRuntimeShim, GpuOptimisticTransactionBase}
 import org.apache.spark.sql.delta.schema.InvariantViolationException
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -67,18 +67,10 @@ import org.apache.spark.util.SerializableConfiguration
 class GpuOptimisticTransaction(deltaLog: DeltaLog,
     catalogTable: Option[CatalogTable],
     snapshot: Option[Snapshot],
-    rapidsConf: RapidsConf)
+    rapidsConf: RapidsConf,
+    autoCompactHook: PostCommitHook)
   extends GpuOptimisticTransactionBase(deltaLog, catalogTable, snapshot, rapidsConf)
   with ClassicSessionDeltaCommandShims {
-
-  /** Creates a new OptimisticTransaction.
-   *
-   * @param deltaLog The Delta Log for the table this transaction is modifying.
-   * @param rapidsConf RAPIDS Accelerator config settings
-   */
-  def this(deltaLog: DeltaLog, rapidsConf: RapidsConf) = {
-    this(deltaLog, Option.empty[CatalogTable], Some(deltaLog.update()), rapidsConf)
-  }
 
   private def getGpuStatsColExpr(
       statsDataSchema: Seq[Attribute],
@@ -300,7 +292,7 @@ class GpuOptimisticTransaction(deltaLog: DeltaLog,
         case _ => true
       }
 
-    if (resultFiles.nonEmpty && !isOptimize) registerPostCommitHook(GpuAutoCompact)
+    if (resultFiles.nonEmpty && !isOptimize) registerPostCommitHook(autoCompactHook)
 
      // Record the updated high water marks to be used during transaction commit.
     identityTrackerOpt.foreach { tracker =>

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * Copyright (c) 2026, NVIDIA CORPORATION.
  *
  * This file was derived from DeltaDataSource.scala in the
  * Delta Lake project at https://github.com/delta-io/delta.
@@ -19,30 +19,56 @@
  * limitations under the License.
  */
 
-package com.nvidia.spark.rapids.delta.delta33x
+package com.nvidia.spark.rapids.delta.delta42x
 
 import com.nvidia.spark.rapids.RapidsConf
 import com.nvidia.spark.rapids.delta.GpuDeltaCatalogBase
 
-import org.apache.spark.sql.SaveMode
+import org.apache.spark.sql.{DataFrame, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.connector.catalog.Identifier
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
+import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.TableCreationModes
 import org.apache.spark.sql.delta.rapids.GpuWriteIntoDelta
-import org.apache.spark.sql.delta.rapids.delta33x.GpuCreateDeltaTableCommand
+import org.apache.spark.sql.delta.rapids.delta42x.GpuCreateDeltaTableCommand
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 
 class GpuDeltaCatalog(
     cpuCatalog: DeltaCatalog,
     rapidsConf: RapidsConf)
   extends GpuDeltaCatalogBase(cpuCatalog, rapidsConf) {
 
+  override protected lazy val isUnityCatalog: Boolean = {
+    val delegateField = classOf[DelegatingCatalogExtension].getDeclaredField("delegate")
+    delegateField.setAccessible(true)
+    delegateField.get(cpuCatalog).getClass.getCanonicalName.startsWith("io.unitycatalog.")
+  }
+
+  override protected def getTableIdentifier(ident: Identifier): TableIdentifier = {
+    val table = super.getTableIdentifier(ident)
+    if (isUnityCatalog) {
+      table.copy(catalog = Some(cpuCatalog.name()))
+    } else {
+      table
+    }
+  }
+
   override protected def getExistingTableIfExists(
       table: TableIdentifier,
       ident: Identifier,
       operation: TableCreationModes.CreationMode): Option[CatalogTable] = {
-    cpuCatalog.getExistingTableIfExists(table)
+    cpuCatalog.getExistingTableIfExists(table, Some(ident), operation)
+  }
+
+  override protected def respectManagedLocation: Boolean = isUnityCatalog || DeltaUtils.isTesting
+
+  override protected def allowCatalogManaged(tableType: CatalogTableType): Boolean = {
+    isUnityCatalog && tableType == CatalogTableType.MANAGED
+  }
+
+  override protected def useCatalogCreateTable(sourceQuery: Option[DataFrame]): Boolean = {
+    isUnityCatalog
   }
 
   override protected def createGpuCreateDeltaTableCommand(
@@ -61,6 +87,7 @@ class GpuDeltaCatalog(
       writer,
       operation,
       tableByPath = isByPath,
+      allowCatalogManaged = allowCatalogManaged,
       createTableFunc = tableCreateFunc)(rapidsConf).run(spark)
   }
 }

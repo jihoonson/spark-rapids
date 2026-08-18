@@ -118,6 +118,19 @@ abstract class GpuCreateDeltaTableCommandBase(
     enforceDependenciesInConfiguration(sparkSession, configuration, snapshot)
   }
 
+  protected def validateCatalogManagedTable(sparkSession: SparkSession): Unit = {}
+
+  protected def validateCatalogManagedTableProperties(
+      sparkSession: SparkSession,
+      gpuDeltaLog: GpuDeltaLog,
+      tableWithLocation: CatalogTable): Unit = {}
+
+  protected def metadataForReplace(
+      txn: GpuOptimisticTransactionBase,
+      metadata: Metadata): Metadata = metadata
+
+  protected def catalogTableForTransaction: Option[CatalogTable] = None
+
   override def run(sparkSession: SparkSession): Seq[Row] = {
 
     assert(table.tableType != CatalogTableType.VIEW)
@@ -131,6 +144,8 @@ abstract class GpuCreateDeltaTableCommandBase(
     } else if (mode == SaveMode.ErrorIfExists && tableExistsInCatalog) {
       throw DeltaErrors.tableAlreadyExists(table)
     }
+
+    validateCatalogManagedTable(sparkSession)
 
     val tableWithLocation = if (tableExistsInCatalog) {
       val existingTable = existingTableOpt.get
@@ -164,6 +179,7 @@ abstract class GpuCreateDeltaTableCommandBase(
       GpuDeltaLog.forTable(sparkSession, tableLocation, fileSystemOptions, rapidsConf)
     CoordinatedCommitsUtils.validateConfigurationsForCreateDeltaTableCommand(
       sparkSession, gpuDeltaLog.deltaLog.tableExists, query, tableWithLocation.properties)
+    validateCatalogManagedTableProperties(sparkSession, gpuDeltaLog, tableWithLocation)
 
     recordDeltaOperation(gpuDeltaLog.deltaLog, "delta.ddl.createTable") {
       val result = handleCommit(sparkSession, gpuDeltaLog, tableWithLocation)
@@ -345,7 +361,8 @@ abstract class GpuCreateDeltaTableCommandBase(
       }
       val op = getOperation(txn.metadata, isManagedTable, Some(options),
         clusterBy = ClusteredTableUtils.getLogicalClusteringColumnNames(
-          txn, taggedCommitData.actions)
+          txn, taggedCommitData.actions),
+        isV1SaveAsTableOverwrite = if (isV1Writer) Some(true) else None
       )
       (taggedCommitData, op)
     }
@@ -654,13 +671,12 @@ abstract class GpuCreateDeltaTableCommandBase(
     metadata: Metadata,
     isManagedTable: Boolean,
     options: Option[DeltaOptions],
-    clusterBy: Option[Seq[String]]
+    clusterBy: Option[Seq[String]],
+    isV1SaveAsTableOverwrite: Option[Boolean] = None
     ): DeltaOperations.Operation = operation match {
     // This is legacy saveAsTable behavior in Databricks Runtime
     case TableCreationModes.Create if existingTableOpt.isDefined && query.isDefined =>
-      DeltaOperations.Write(mode, Option(table.partitionColumnNames), options.get.replaceWhere,
-        options.flatMap(_.userMetadata)
-      )
+      DeltaRuntimeShim.buildWriteOperation(mode, table.partitionColumnNames, options.get)
 
     // DataSourceV2 table creation
     // CREATE TABLE (non-DataFrameWriter API) doesn't have options syntax
@@ -674,21 +690,19 @@ abstract class GpuCreateDeltaTableCommandBase(
     // REPLACE TABLE (non-DataFrameWriter API) doesn't have options syntax
     // (userMetadata uses SQLConf in this case)
     case TableCreationModes.Replace =>
-      DeltaOperations.ReplaceTable(
-        metadata, isManagedTable, orCreate = false, query.isDefined, clusterBy = clusterBy
-      )
+      DeltaRuntimeShim.buildReplaceTableOperation(
+        metadata, isManagedTable, orCreate = false, query.isDefined, options, clusterBy,
+        isV1SaveAsTableOverwrite)
 
     // Legacy saveAsTable with Overwrite mode
     case TableCreationModes.CreateOrReplace if options.exists(_.replaceWhere.isDefined) =>
-      DeltaOperations.Write(mode, Option(table.partitionColumnNames), options.get.replaceWhere,
-        options.flatMap(_.userMetadata)
-      )
+      DeltaRuntimeShim.buildWriteOperation(mode, table.partitionColumnNames, options.get)
 
     // New DataSourceV2 saveAsTable with overwrite mode behavior
     case TableCreationModes.CreateOrReplace =>
-      DeltaOperations.ReplaceTable(metadata, isManagedTable, orCreate = true, query.isDefined,
-        options.flatMap(_.userMetadata), clusterBy = clusterBy
-      )
+      DeltaRuntimeShim.buildReplaceTableOperation(
+        metadata, isManagedTable, orCreate = true, query.isDefined, options, clusterBy,
+        isV1SaveAsTableOverwrite)
   }
 
   private def getDeltaTablePath(table: CatalogTable): Path = {
@@ -803,6 +817,7 @@ abstract class GpuCreateDeltaTableCommandBase(
         newMetadata.configuration,
         txn.snapshot)
       newMetadata = newMetadata.copy(configuration = updatedConfig)
+      newMetadata = metadataForReplace(txn, newMetadata)
       txn.updateMetadataForNewTableInReplace(newMetadata)
     }
   }
@@ -832,7 +847,7 @@ abstract class GpuCreateDeltaTableCommandBase(
      gpuDeltaLog: GpuDeltaLog,
      tableWithLocation: CatalogTable,
      snapshotOpt: Option[Snapshot] = None): GpuOptimisticTransactionBase = {
-    val txn = gpuDeltaLog.startTransaction(None, snapshotOpt)
+    val txn = gpuDeltaLog.startTransaction(catalogTableForTransaction, snapshotOpt)
     validatePrerequisitesForClusteredTable(txn.snapshot.protocol, txn.deltaLog)
 
     // During CREATE (not REPLACE/overwrites), we synchronously run conversion

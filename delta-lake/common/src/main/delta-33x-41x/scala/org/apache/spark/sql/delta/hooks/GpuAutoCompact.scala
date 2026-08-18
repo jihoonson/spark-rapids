@@ -36,6 +36,8 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.AutoCompactPartitionStats
 
 trait GpuAutoCompactBase extends AutoCompactBase {
+  protected def getTableId(deltaLog: DeltaLog): String
+
   /**
    * Execute a prepared auto-compaction request. Version-specific shims are responsible for
    * constructing the request with the correct Delta API.
@@ -48,11 +50,10 @@ trait GpuAutoCompactBase extends AutoCompactBase {
       opType: String,
       maxDeletedRowsRatio: Option[Double]
   ): Seq[OptimizeMetrics] = {
-    val tableId = deltaLog.tableId
+    val tableId = getTableId(deltaLog)
     if (autoCompactRequest.shouldCompact) {
       try {
-        val metrics = GpuAutoCompact
-          .compact(
+        val metrics = compact(
             spark,
             deltaLog,
             catalogTable,

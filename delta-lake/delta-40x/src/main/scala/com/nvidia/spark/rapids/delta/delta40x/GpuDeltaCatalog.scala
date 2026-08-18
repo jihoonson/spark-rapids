@@ -24,7 +24,9 @@ package com.nvidia.spark.rapids.delta.delta40x
 import com.nvidia.spark.rapids.RapidsConf
 
 import org.apache.spark.sql.SaveMode
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.TableCreationModes
 import org.apache.spark.sql.delta.rapids.{GpuCreateDeltaTableCommand40x41xBase, GpuDeltaCatalog4x, GpuWriteIntoDelta}
@@ -34,6 +36,13 @@ class GpuDeltaCatalog(
     cpuCatalog: DeltaCatalog,
     rapidsConf: RapidsConf)
   extends GpuDeltaCatalog4x(cpuCatalog, rapidsConf) {
+
+  override protected def getExistingTableIfExists(
+      table: TableIdentifier,
+      ident: Identifier,
+      operation: TableCreationModes.CreationMode): Option[CatalogTable] = {
+    cpuCatalog.getExistingTableIfExists(table)
+  }
 
   override protected def buildGpuCreateDeltaTableCommand(
       withDb: CatalogTable,

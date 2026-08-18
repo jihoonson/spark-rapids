@@ -31,13 +31,11 @@ case class GpuWriteIntoDelta(
     extends GpuWriteIntoDeltaBase(gpuDeltaLog, cpuWrite) {
 
   override protected def buildCommitMetadata: DeltaOperations.Operation = {
-    DeltaOperations.Write(
-      cpuWrite.mode,
-      Option(cpuWrite.partitionColumns),
-      cpuWrite.options.replaceWhere,
-      cpuWrite.options.userMetadata)
+    DeltaRuntimeShim.buildWriteOperation(
+      cpuWrite.mode, cpuWrite.partitionColumns, cpuWrite.options)
   }
 
-  override protected def copyWithCpuWrite(newCpuWrite: WriteIntoDelta): GpuWriteIntoDelta =
+  override protected def copyWithCpuWrite(newCpuWrite: WriteIntoDelta): GpuWriteIntoDelta = {
     copy(cpuWrite = newCpuWrite)
+  }
 }

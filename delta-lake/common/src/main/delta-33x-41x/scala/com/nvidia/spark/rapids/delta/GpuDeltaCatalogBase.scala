@@ -67,7 +67,25 @@ abstract class GpuDeltaCatalogBase(
       writer: Option[GpuWriteIntoDelta],
       operation: TableCreationModes.CreationMode,
       isByPath: Boolean,
+      allowCatalogManaged: Boolean,
       tableCreateFunc: Option[CatalogTable => Unit]): Unit
+
+  protected def getTableIdentifier(ident: Identifier): TableIdentifier = {
+    TableIdentifier(ident.name(), ident.namespace().lastOption)
+  }
+
+  protected def getExistingTableIfExists(
+      table: TableIdentifier,
+      ident: Identifier,
+      operation: TableCreationModes.CreationMode): Option[CatalogTable]
+
+  protected def respectManagedLocation: Boolean = isUnityCatalog
+
+  protected def allowCatalogManaged(tableType: CatalogTableType): Boolean = false
+
+  protected def useCatalogCreateTable(sourceQuery: Option[DataFrame]): Boolean = {
+    isUnityCatalog && sourceQuery.isEmpty
+  }
 
   /** copied from trait SupportsPathIdentifier */
   private def supportSQLOnFile: Boolean = spark.sessionState.conf.runSQLonFile
@@ -201,11 +219,9 @@ abstract class GpuDeltaCatalogBase(
     } else {
       Option(allTableProperties.get("location"))
     }
-    val id = {
-      TableIdentifier(ident.name(), ident.namespace().lastOption)
-    }
+    val id = getTableIdentifier(ident)
     val locUriOpt = location.map(CatalogUtils.stringToURI)
-    val existingTableOpt = cpuCatalog.getExistingTableIfExists(id)
+    val existingTableOpt = getExistingTableIfExists(id, ident, operation)
     // PROP_IS_MANAGED_LOCATION indicates that the table location is not user-specified but
     // system-generated. The table should be created as managed table in this case.
     val isManagedLocation = Option(allTableProperties.get(TableCatalog.PROP_IS_MANAGED_LOCATION))
@@ -213,7 +229,7 @@ abstract class GpuDeltaCatalogBase(
     // Note: Spark generates the table location for managed tables in
     // `DeltaCatalog#delegate#createTable`, so `isManagedLocation` should never be true if
     // Unity Catalog is not involved. For safety we also check `isUnityCatalog` here.
-    val respectManagedLoc = isUnityCatalog
+    val respectManagedLoc = respectManagedLocation
     val tableType = if (location.isEmpty || (isManagedLocation && respectManagedLoc)) {
       CatalogTableType.MANAGED
     } else {
@@ -268,7 +284,7 @@ abstract class GpuDeltaCatalogBase(
     // TODO: Spark `V2SessionCatalog` mistakenly treat tables with location as EXTERNAL table.
     //       Before this bug is fixed, we should only call the catalog plugin API to create tables
     //       if UC is enabled to replace `V2SessionCatalog`.
-    val tableCreateFunc = if (isUnityCatalog && sourceQuery.isEmpty) {
+    val tableCreateFunc = if (useCatalogCreateTable(sourceQuery)) {
       Some[CatalogTable => Unit](v1Table => {
         val t = DeltaTrampoline.getV1Table(v1Table)
         cpuCatalog.createTable(ident, t.columns(), t.partitioning, t.properties)
@@ -284,6 +300,7 @@ abstract class GpuDeltaCatalogBase(
       writer,
       operation,
       isByPath = isByPath,
+      allowCatalogManaged = allowCatalogManaged(tableType),
       tableCreateFunc = tableCreateFunc)
 
     cpuCatalog.loadTable(ident)

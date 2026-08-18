@@ -52,6 +52,7 @@ abstract class GpuDeltaCatalog4x(
       writer: Option[GpuWriteIntoDelta],
       operation: TableCreationModes.CreationMode,
       isByPath: Boolean,
+      allowCatalogManaged: Boolean,
       tableCreateFunc: Option[CatalogTable => Unit]): Unit = {
     buildGpuCreateDeltaTableCommand(
       withDb,
