@@ -114,7 +114,7 @@ _statements = [
 # column
 @delta_lake
 @allow_non_gpu('CollectLimitExec')
-# SubqueryBroadcastExec is unoptimized in Databricks 11.3 with EXECUTOR_BROADCAST
+# SubqueryBroadcastExec is unoptimized with EXECUTOR_BROADCAST in Databricks
 # See https://github.com/NVIDIA/spark-rapids/issues/7425
 @allow_non_gpu_conditional(is_databricks_runtime(), 'SubqueryBroadcastExec')
 @ignore_order(local=True)
