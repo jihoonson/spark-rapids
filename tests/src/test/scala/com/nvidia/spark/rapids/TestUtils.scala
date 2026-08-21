@@ -57,7 +57,7 @@ object TestUtils extends Assertions {
     module.getClass.getMethod("clearSerializer").invoke(module)
   }
 
-  private[rapids] def withFinalPlanValidation[U](f: => U): U = {
+  def withFinalPlanValidation[U](f: => U): U = {
     ExecutionPlanCaptureCallback.startValidation(planValidationTimeoutMillis)
 
     var result: Option[U] = None
@@ -95,6 +95,16 @@ object TestUtils extends Assertions {
       throw new AssertionError(validationError)
     }
     result.get
+  }
+
+  /** Execute a physical plan directly and validate it after successful completion. */
+  def executeAndValidatePlan[U](plan: SparkPlan)(f: => U): U = {
+    val validationContext = TestPlanValidator.resolveValidationContext(plan)
+      .getOrElse(TestPlanValidator.captureValidationContext(plan))
+    val result = f
+    TestPlanValidator.tagForValidation(plan, validationContext)
+    TestPlanValidator.validatePlan(plan)
+    result
   }
 
   /** Compare the equality of two tables */
