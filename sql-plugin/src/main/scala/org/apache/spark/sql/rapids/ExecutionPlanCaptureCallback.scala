@@ -171,6 +171,7 @@ class ExecutionPlanCaptureCallback extends QueryExecutionListener {
 
   override def onFailure(funcName: String, qe: QueryExecution, exception: Exception): Unit =
     ExecutionPlanCaptureCallback.captureIfNeeded(qe)
+    ExecutionPlanCaptureCallback.captureForValidationIfNeeded(funcName, qe)
 }
 
 trait AdaptiveSparkPlanHelperShim {
