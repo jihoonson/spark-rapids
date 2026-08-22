@@ -26,8 +26,9 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class ClassInitializationSuite extends AnyFunSuite with FQSuiteName {
   test("SparkShimImpl and GpuOverrides can be initialized concurrently") {
-    assume(VersionUtils.isSpark && VersionUtils.cmpSparkVersion(3, 4, 0) >= 0,
-      "The eager Spark340PlusNonDBShims.shimExecs initializer is only in Spark 3.4+")
+    assume(VersionUtils.isDataBricks ||
+        (VersionUtils.isSpark && VersionUtils.cmpSparkVersion(3, 4, 0) >= 0),
+      "The affected shimExecs initializers are only in Databricks or Spark 3.4+")
 
     var attempts = 0
     var result: ChildResult = null
@@ -227,7 +228,8 @@ object GpuOverridesClassInitializationReproducer {
   private def hasSafeInitializationStack(thread: Thread, className: String): Boolean = {
     val stack = thread.getStackTrace
     val isInitializingTarget = stack.exists { frame =>
-      frame.getClassName == className && frame.getMethodName == "<init>"
+      frame.getClassName == className &&
+        (frame.getMethodName == "<init>" || frame.getMethodName == "<clinit>")
     }
     val isLoadingClass = stack.exists { frame =>
       val name = frame.getClassName
