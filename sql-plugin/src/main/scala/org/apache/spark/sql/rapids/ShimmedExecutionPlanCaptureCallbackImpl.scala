@@ -27,6 +27,7 @@ import scala.util.matching.Regex
 import com.nvidia.spark.rapids.{GpuCpuBridgeExpression, PlanShims, PlanUtils, ShimLoaderTemp,
   TestPlanValidator}
 
+import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.execution.{ExecSubqueryExpression, QueryExecution, ReusedSubqueryExec, SparkPlan}
@@ -40,7 +41,8 @@ import org.apache.spark.sql.execution.exchange.{ReusedExchangeExec, ShuffleExcha
  * under unshimmed-common-from-single-shim.txt don't get confused and pick this class to be
  * un-shimmed.
  */
-class ShimmedExecutionPlanCaptureCallbackImpl extends ExecutionPlanCaptureCallbackBase {
+class ShimmedExecutionPlanCaptureCallbackImpl
+    extends ExecutionPlanCaptureCallbackBase with Logging {
   private[this] var shouldCapture: Boolean = false
   private[this] val execPlans: ArrayBuffer[SparkPlan] = ArrayBuffer.empty
   private[this] var shouldValidate: Boolean = false
@@ -60,6 +62,21 @@ class ShimmedExecutionPlanCaptureCallbackImpl extends ExecutionPlanCaptureCallba
       synchronized {
     if (shouldValidate) {
       validationPlans.append((funcName, qe.executedPlan))
+    }
+  }
+
+  override def captureForValidationIfNeededOnFailure(
+      funcName: String, qe: QueryExecution): Unit = {
+    try {
+      captureForValidationIfNeeded(funcName, qe)
+    } catch {
+      // row-based_udf_test.py::test_hive_empty_simple_udf is xfailed on Spark 4 for
+      // cudf-spark#15268, which throws NoClassDefFoundError. Capturing the error so
+      // that it won't stop the SparkContext and cascade to other tests.
+      case e: NoClassDefFoundError =>
+        logWarning(s"Unable to capture the query plan for validation after $funcName failed", e)
+      case NonFatal(e) =>
+        logWarning(s"Unable to capture the query plan for validation after $funcName failed", e)
     }
   }
 

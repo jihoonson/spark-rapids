@@ -18,7 +18,7 @@ package org.apache.spark.sql.rapids
 
 import java.util.concurrent.TimeoutException
 
-import org.mockito.Mockito.{doThrow, verify, when}
+import org.mockito.Mockito.{verify, when}
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatestplus.mockito.MockitoSugar
 
@@ -32,25 +32,26 @@ class ShimmedExecutionPlanCaptureCallbackImplSuite
       override private[rapids] def callback: ExecutionPlanCaptureCallbackBase = callbackImpl
     }
 
-  private def verifyPlanCaptureFailureIsIgnored(planCaptureFailure: Throwable): Unit = {
-    val callback = mock[ExecutionPlanCaptureCallbackBase]
-    val queryExecution = mock[QueryExecution]
-    doThrow(planCaptureFailure).when(callback)
-      .captureForValidationIfNeeded("failedAction", queryExecution)
-
-    newListener(callback).onFailure(
-      "failedAction", queryExecution, new RuntimeException("primary query failure"))
-
-    verify(callback).captureIfNeeded(queryExecution)
-    verify(callback).captureForValidationIfNeeded("failedAction", queryExecution)
-  }
-
   private class TestExecutionPlanCaptureCallback
       extends ShimmedExecutionPlanCaptureCallbackImpl {
     private var nextWaitFailure: Throwable = null
+    private var nextPlanCaptureFailure: Throwable = null
 
     def failNextWait(failure: Throwable): Unit = {
       nextWaitFailure = failure
+    }
+
+    def failNextPlanCapture(failure: Throwable): Unit = {
+      nextPlanCaptureFailure = failure
+    }
+
+    override def captureForValidationIfNeeded(funcName: String, qe: QueryExecution): Unit = {
+      val failure = nextPlanCaptureFailure
+      nextPlanCaptureFailure = null
+      if (failure != null) {
+        throw failure
+      }
+      super.captureForValidationIfNeeded(funcName, qe)
     }
 
     override protected def waitUntilListenerBusEmpty(timeoutMillis: Long): Unit = {
@@ -60,6 +61,12 @@ class ShimmedExecutionPlanCaptureCallbackImplSuite
         throw failure
       }
     }
+  }
+
+  private def verifyPlanCaptureFailureIsIgnored(planCaptureFailure: Throwable): Unit = {
+    val callback = new TestExecutionPlanCaptureCallback
+    callback.failNextPlanCapture(planCaptureFailure)
+    callback.captureForValidationIfNeededOnFailure("failedAction", mock[QueryExecution])
   }
 
   test("listener-bus drain timeouts clear validation capture state") {
@@ -100,16 +107,36 @@ class ShimmedExecutionPlanCaptureCallbackImplSuite
     verifyPlanCaptureFailureIsIgnored(new IllegalStateException("test plan unavailable"))
   }
 
-  test("failed query validation propagates other fatal errors while capturing the plan") {
+  test("successful query validation propagates errors while capturing the plan") {
+    val callback = new TestExecutionPlanCaptureCallback
+    val planCaptureFailure = new IllegalStateException("test plan unavailable")
+    callback.failNextPlanCapture(planCaptureFailure)
+
+    val thrown = intercept[IllegalStateException] {
+      callback.captureForValidationIfNeeded("successfulAction", mock[QueryExecution])
+    }
+
+    assert(thrown eq planCaptureFailure)
+  }
+
+  test("failed query uses failure-specific validation capture") {
     val callback = mock[ExecutionPlanCaptureCallbackBase]
     val queryExecution = mock[QueryExecution]
+
+    newListener(callback).onFailure(
+      "failedAction", queryExecution, new RuntimeException("primary query failure"))
+
+    verify(callback).captureIfNeeded(queryExecution)
+    verify(callback).captureForValidationIfNeededOnFailure("failedAction", queryExecution)
+  }
+
+  test("failed query validation propagates other fatal errors while capturing the plan") {
+    val callback = new TestExecutionPlanCaptureCallback
     val fatalError = new LinkageError("fatal test error")
-    doThrow(fatalError).when(callback)
-      .captureForValidationIfNeeded("failedAction", queryExecution)
+    callback.failNextPlanCapture(fatalError)
 
     val thrown = intercept[LinkageError] {
-      newListener(callback).onFailure(
-        "failedAction", queryExecution, new RuntimeException("primary query failure"))
+      callback.captureForValidationIfNeededOnFailure("failedAction", mock[QueryExecution])
     }
 
     assert(thrown eq fatalError)

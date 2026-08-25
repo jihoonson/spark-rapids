@@ -16,11 +16,8 @@
 
 package org.apache.spark.sql.rapids
 
-import scala.util.control.NonFatal
-
 import com.nvidia.spark.rapids.ShimLoaderTemp
 
-import org.apache.spark.internal.Logging
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.execution.{QueryExecution, SparkPlan}
 import org.apache.spark.sql.util.QueryExecutionListener
@@ -28,6 +25,7 @@ import org.apache.spark.sql.util.QueryExecutionListener
 trait ExecutionPlanCaptureCallbackBase {
   def captureIfNeeded(qe: QueryExecution): Unit
   def captureForValidationIfNeeded(funcName: String, qe: QueryExecution): Unit
+  def captureForValidationIfNeededOnFailure(funcName: String, qe: QueryExecution): Unit
   def startCapture(): Unit
   def startCapture(timeoutMillis: Long): Unit
   def startValidation(timeoutMillis: Long): Unit
@@ -77,6 +75,10 @@ object ExecutionPlanCaptureCallback extends ExecutionPlanCaptureCallbackBase {
 
   override def captureForValidationIfNeeded(funcName: String, qe: QueryExecution): Unit =
     impl.captureForValidationIfNeeded(funcName, qe)
+
+  override def captureForValidationIfNeededOnFailure(
+      funcName: String, qe: QueryExecution): Unit =
+    impl.captureForValidationIfNeededOnFailure(funcName, qe)
 
   override def startCapture(): Unit =
     impl.startCapture()
@@ -166,7 +168,7 @@ object ExecutionPlanCaptureCallback extends ExecutionPlanCaptureCallbackBase {
 /**
  * Used as a part of testing to capture the executed query plan.
  */
-class ExecutionPlanCaptureCallback extends QueryExecutionListener with Logging {
+class ExecutionPlanCaptureCallback extends QueryExecutionListener {
   private[rapids] def callback: ExecutionPlanCaptureCallbackBase = ExecutionPlanCaptureCallback
 
   override def onSuccess(funcName: String, qe: QueryExecution, durationNs: Long): Unit = {
@@ -176,17 +178,7 @@ class ExecutionPlanCaptureCallback extends QueryExecutionListener with Logging {
 
   override def onFailure(funcName: String, qe: QueryExecution, exception: Exception): Unit = {
     callback.captureIfNeeded(qe)
-    try {
-      callback.captureForValidationIfNeeded(funcName, qe)
-    } catch {
-      // row-based_udf_test.py::test_hive_empty_simple_udf is xfailed on Spark 4 for
-      // cudf-spark#15268, which throws NoClassDefFoundError. Capturing the error so
-      // that it won't stop the SparkContext and cascade to other tests.
-      case e: NoClassDefFoundError =>
-        logWarning(s"Unable to capture the query plan for validation after $funcName failed", e)
-      case NonFatal(e) =>
-        logWarning(s"Unable to capture the query plan for validation after $funcName failed", e)
-    }
+    callback.captureForValidationIfNeededOnFailure(funcName, qe)
   }
 }
 
