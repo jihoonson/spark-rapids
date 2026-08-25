@@ -16,8 +16,11 @@
 
 package org.apache.spark.sql.rapids
 
+import scala.util.control.NonFatal
+
 import com.nvidia.spark.rapids.ShimLoaderTemp
 
+import org.apache.spark.internal.Logging
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.execution.{QueryExecution, SparkPlan}
 import org.apache.spark.sql.util.QueryExecutionListener
@@ -163,15 +166,27 @@ object ExecutionPlanCaptureCallback extends ExecutionPlanCaptureCallbackBase {
 /**
  * Used as a part of testing to capture the executed query plan.
  */
-class ExecutionPlanCaptureCallback extends QueryExecutionListener {
+class ExecutionPlanCaptureCallback extends QueryExecutionListener with Logging {
+  private[rapids] def callback: ExecutionPlanCaptureCallbackBase = ExecutionPlanCaptureCallback
+
   override def onSuccess(funcName: String, qe: QueryExecution, durationNs: Long): Unit = {
-    ExecutionPlanCaptureCallback.captureIfNeeded(qe)
-    ExecutionPlanCaptureCallback.captureForValidationIfNeeded(funcName, qe)
+    callback.captureIfNeeded(qe)
+    callback.captureForValidationIfNeeded(funcName, qe)
   }
 
   override def onFailure(funcName: String, qe: QueryExecution, exception: Exception): Unit = {
-    ExecutionPlanCaptureCallback.captureIfNeeded(qe)
-    ExecutionPlanCaptureCallback.captureForValidationIfNeeded(funcName, qe)
+    callback.captureIfNeeded(qe)
+    try {
+      callback.captureForValidationIfNeeded(funcName, qe)
+    } catch {
+      // row-based_udf_test.py::test_hive_empty_simple_udf is xfailed on Spark 4 for
+      // cudf-spark#15268, which throws NoClassDefFoundError. Capturing the error so
+      // that it won't stop the SparkContext and cascade to other tests.
+      case e: NoClassDefFoundError =>
+        logWarning(s"Unable to capture the query plan for validation after $funcName failed", e)
+      case NonFatal(e) =>
+        logWarning(s"Unable to capture the query plan for validation after $funcName failed", e)
+    }
   }
 }
 
