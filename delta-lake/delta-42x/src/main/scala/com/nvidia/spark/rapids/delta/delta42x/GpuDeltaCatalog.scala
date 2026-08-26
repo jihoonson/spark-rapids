@@ -32,7 +32,6 @@ import org.apache.spark.sql.delta.commands.TableCreationModes
 import org.apache.spark.sql.delta.rapids.{GpuCreateDeltaTableCommand40x41xBase,
   GpuDeltaCatalog4x, GpuWriteIntoDelta}
 import org.apache.spark.sql.delta.rapids.delta42x.GpuCreateDeltaTableCommand
-import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 
 class GpuDeltaCatalog(
     cpuCatalog: DeltaCatalog,
@@ -60,8 +59,6 @@ class GpuDeltaCatalog(
       operation: TableCreationModes.CreationMode): Option[CatalogTable] = {
     cpuCatalog.getExistingTableIfExists(table, Some(ident), operation)
   }
-
-  override protected def respectManagedLocation: Boolean = isUnityCatalog || DeltaUtils.isTesting
 
   override protected def allowCatalogManaged(tableType: CatalogTableType): Boolean = {
     isUnityCatalog && tableType == CatalogTableType.MANAGED
