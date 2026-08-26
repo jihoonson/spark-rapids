@@ -25,9 +25,12 @@ import org.apache.spark.storage.StorageLevel
 /**
  * Delta 4.2 adapter for the shared GPU merge command.
  *
- * Delta 4.2 moved the materialization state into abstract members on
- * `MergeIntoMaterializeSource`. Declaring them here keeps the Delta 4.2 command compatible when
- * the aggregate plugin JAR also contains the Delta 4.0/4.1 implementation of the shared class.
+ * `MergeIntoMaterializeSource` stores its materialization state in private trait variables. Scala
+ * compiles those variables into abstract, compiler-qualified accessors that the implementing
+ * command must provide. The Spark 4.0 aggregate JAR contains both the Delta 4.0 and Delta 4.2
+ * adapters, but retains the Delta-4.0-compiled `GpuMergeIntoCommand`, which does not implement
+ * those accessors. Declaring the state and accessors in this version-specific subclass ensures
+ * that the Delta 4.2 command satisfies the trait at runtime and avoids an `AbstractMethodError`.
  */
 class GpuMergeIntoCommand42x(mergeCmd: MergeIntoCommand, conf: RapidsConf)
   extends GpuMergeIntoCommand(

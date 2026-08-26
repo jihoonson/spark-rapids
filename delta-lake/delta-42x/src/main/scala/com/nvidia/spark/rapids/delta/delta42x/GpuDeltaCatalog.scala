@@ -22,7 +22,6 @@
 package com.nvidia.spark.rapids.delta.delta42x
 
 import com.nvidia.spark.rapids.RapidsConf
-import com.nvidia.spark.rapids.delta.GpuDeltaCatalogBase
 
 import org.apache.spark.sql.{DataFrame, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -30,14 +29,15 @@ import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.TableCreationModes
-import org.apache.spark.sql.delta.rapids.GpuWriteIntoDelta
+import org.apache.spark.sql.delta.rapids.{GpuCreateDeltaTableCommand40x41xBase,
+  GpuDeltaCatalog4x, GpuWriteIntoDelta}
 import org.apache.spark.sql.delta.rapids.delta42x.GpuCreateDeltaTableCommand
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 
 class GpuDeltaCatalog(
     cpuCatalog: DeltaCatalog,
     rapidsConf: RapidsConf)
-  extends GpuDeltaCatalogBase(cpuCatalog, rapidsConf) {
+  extends GpuDeltaCatalog4x(cpuCatalog, rapidsConf) {
 
   override protected lazy val isUnityCatalog: Boolean = {
     val delegateField = classOf[DelegatingCatalogExtension].getDeclaredField("delegate")
@@ -71,7 +71,7 @@ class GpuDeltaCatalog(
     isUnityCatalog
   }
 
-  override protected def createGpuCreateDeltaTableCommand(
+  override protected def buildGpuCreateDeltaTableCommand(
       withDb: CatalogTable,
       existingTableOpt: Option[CatalogTable],
       mode: SaveMode,
@@ -79,7 +79,7 @@ class GpuDeltaCatalog(
       operation: TableCreationModes.CreationMode,
       isByPath: Boolean,
       allowCatalogManaged: Boolean,
-      tableCreateFunc: Option[CatalogTable => Unit]): Unit = {
+      tableCreateFunc: Option[CatalogTable => Unit]): GpuCreateDeltaTableCommand40x41xBase = {
     GpuCreateDeltaTableCommand(
       withDb,
       existingTableOpt,
@@ -88,6 +88,6 @@ class GpuDeltaCatalog(
       operation,
       tableByPath = isByPath,
       allowCatalogManaged = allowCatalogManaged,
-      createTableFunc = tableCreateFunc)(rapidsConf).run(spark)
+      createTableFunc = tableCreateFunc)(rapidsConf)
   }
 }

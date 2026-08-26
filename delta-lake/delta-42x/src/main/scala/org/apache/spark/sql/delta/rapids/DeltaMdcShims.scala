@@ -19,6 +19,11 @@ package org.apache.spark.sql.delta.rapids
 import org.apache.spark.internal.{Logging, LogKey, MDC}
 
 object DeltaMdcShims {
+  // Spark 4.0 constructs MDC entries through the MDC companion object, while Spark 4.1 exposes
+  // MDC(LogKey, value) as a method on Logging and no longer provides that companion object.
+  // Defining the call inside a Logging implementation lets this Delta 4.2 source compile against
+  // both Spark lines: MDC(...) resolves to the companion in Spark 4.0 and the inherited method in
+  // Spark 4.1.
   private object LoggingBridge extends Logging {
     def createMdc(logKey: LogKey, value: Any): MDC = MDC(logKey, value)
   }

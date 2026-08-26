@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.TableCreationModes
 
 /**
- * Shared GPU Delta catalog base for the Delta 4.0 and 4.1 shims.
+ * Shared GPU Delta catalog base for the Delta 4.x shims.
  *
  * The shared catalog logic is identical across these runtimes; version-specific
  * subclasses still own their `GpuCreateDeltaTableCommand` wiring and any Delta
@@ -43,6 +43,7 @@ abstract class GpuDeltaCatalog4x(
       writer: Option[GpuWriteIntoDelta],
       operation: TableCreationModes.CreationMode,
       isByPath: Boolean,
+      allowCatalogManaged: Boolean,
       tableCreateFunc: Option[CatalogTable => Unit]): GpuCreateDeltaTableCommand40x41xBase
 
   override protected def createGpuCreateDeltaTableCommand(
@@ -61,6 +62,7 @@ abstract class GpuDeltaCatalog4x(
       writer,
       operation,
       isByPath,
+      allowCatalogManaged,
       tableCreateFunc).run(spark)
   }
 }

@@ -51,6 +51,7 @@ class GpuDeltaCatalog(
       writer: Option[GpuWriteIntoDelta],
       operation: TableCreationModes.CreationMode,
       isByPath: Boolean,
+      allowCatalogManaged: Boolean, // intentionally ignored for Delta 4.0 as it is not supported.
       tableCreateFunc: Option[CatalogTable => Unit]): GpuCreateDeltaTableCommand40x41xBase = {
     GpuCreateDeltaTableCommand(
       withDb,
