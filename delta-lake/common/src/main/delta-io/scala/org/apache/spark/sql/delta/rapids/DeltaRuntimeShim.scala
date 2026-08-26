@@ -93,7 +93,9 @@ object DeltaRuntimeShim {
         Some("org.apache.spark.sql.delta.rapids.delta24x.Delta24xRuntimeShim")
       case (version, (3, 5, patch)) if Delta33xVersions.contains(version) && patch >= 3 =>
         Some("org.apache.spark.sql.delta.rapids.delta33x.Delta33xRuntimeShim")
-      case ("4.0.0", (4, 0, _)) =>
+      case ("4.0.0", (4, 0, 0)) =>
+        Some("org.apache.spark.sql.delta.rapids.delta40x.Delta40xRuntimeShim")
+      case ("4.0.1", (4, 0, patch)) if patch >= 1 && patch <= 4 =>
         Some("org.apache.spark.sql.delta.rapids.delta40x.Delta40xRuntimeShim")
       case ("4.1.0", (4, 1, patch)) if patch <= 1 =>
         Some("org.apache.spark.sql.delta.rapids.delta41x.Delta41xRuntimeShim")

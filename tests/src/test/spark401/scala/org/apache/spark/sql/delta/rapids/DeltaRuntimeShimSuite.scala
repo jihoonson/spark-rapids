@@ -28,7 +28,7 @@ class DeltaRuntimeShimSuite extends SparkQueryCompareTestSuite {
     val provider = DeltaProvider()
     assert(provider ne NoDeltaProvider)
     val expectedProvider = io.delta.VERSION match {
-      case "4.0.0" => "Delta40xProvider"
+      case "4.0.0" | "4.0.1" => "Delta40xProvider"
       case "4.1.0" => "Delta41xProvider"
       case "4.2.0" => "Delta42xProvider"
     }
@@ -43,7 +43,9 @@ class DeltaRuntimeShimSuite extends SparkQueryCompareTestSuite {
       ("2.4.0", "3.4.4", "delta24x"),
       ("3.3.0", "3.5.3", "delta33x"),
       ("3.3.2", "3.5.9", "delta33x"),
-      ("4.0.0", "4.0.1", "delta40x"),
+      ("4.0.0", "4.0.0", "delta40x"),
+      ("4.0.1", "4.0.1", "delta40x"),
+      ("4.0.1", "4.0.4", "delta40x"),
       ("4.1.0", "4.1.1", "delta41x"),
       ("4.2.0", "4.0.1", "delta42x"),
       ("4.2.0", "4.1.1", "delta42x"))
@@ -56,6 +58,9 @@ class DeltaRuntimeShimSuite extends SparkQueryCompareTestSuite {
   test("delta runtime shim selection rejects unsupported combinations") {
     val unsupported = Seq(
       ("3.3.0", "3.5.2"),
+      ("4.0.0", "4.0.1"),
+      ("4.0.1", "4.0.0"),
+      ("4.0.1", "4.0.5"),
       ("4.0.0", "4.1.1"),
       ("4.1.0", "4.1.2"),
       ("4.2.0", "4.0.0"),
