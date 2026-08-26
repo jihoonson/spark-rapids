@@ -100,4 +100,14 @@ case class GpuCreateDeltaTableCommand(
   }
 
   override protected def catalogTableForTransaction: Option[CatalogTable] = existingTableOpt
+
+  override protected def createCatalogTableForCreateOrReplace(
+      sparkSession: SparkSession,
+      table: CatalogTable,
+      createTableFunc: Option[CatalogTable => Unit]): Unit = {
+    createTableFunc match {
+      case Some(createFunc) => createFunc(table)
+      case None => super.createCatalogTableForCreateOrReplace(sparkSession, table, createTableFunc)
+    }
+  }
 }

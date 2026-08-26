@@ -131,6 +131,16 @@ abstract class GpuCreateDeltaTableCommandBase(
 
   protected def catalogTableForTransaction: Option[CatalogTable] = None
 
+  protected def createCatalogTableForCreateOrReplace(
+      spark: SparkSession,
+      table: CatalogTable,
+      createTableFunc: Option[CatalogTable => Unit]): Unit = {
+    spark.sessionState.catalog.createTable(
+      table,
+      ignoreIfExists = false,
+      validateLocation = false)
+  }
+
   override def run(sparkSession: SparkSession): Seq[Row] = {
 
     assert(table.tableType != CatalogTableType.VIEW)
@@ -739,10 +749,7 @@ abstract class GpuCreateDeltaTableCommandBase(
         val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
         throw DeltaErrors.cannotReplaceMissingTableException(ident)
       case TableCreationModes.CreateOrReplace =>
-        spark.sessionState.catalog.createTable(
-          cleaned,
-          ignoreIfExists = false,
-          validateLocation = false)
+        createCatalogTableForCreateOrReplace(spark, cleaned, createTableFunc)
     }
   }
 
