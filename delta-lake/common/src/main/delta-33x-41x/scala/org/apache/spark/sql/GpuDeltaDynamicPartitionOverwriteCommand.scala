@@ -22,7 +22,7 @@ import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.delta.DeltaOptions
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
-import org.apache.spark.sql.delta.rapids.{DeltaCommandShims, GpuDeltaLog, GpuWriteIntoDelta}
+import org.apache.spark.sql.delta.rapids.{DeltaCommandShims, DeltaRuntimeShim, GpuDeltaLog}
 import org.apache.spark.sql.execution.command.RunnableCommand
 
 case class GpuDeltaDynamicPartitionOverwriteCommand(
@@ -63,7 +63,7 @@ case class GpuDeltaDynamicPartitionOverwriteCommand(
     val operationSession = shims.toOperationSparkSession(
       sparkSession.asInstanceOf[shims.ShimSparkSession])
     
-    GpuWriteIntoDelta(
+    DeltaRuntimeShim.createGpuWrite(
       gpuDeltaLog,
       WriteIntoDelta(
         gpuDeltaLog.deltaLog,

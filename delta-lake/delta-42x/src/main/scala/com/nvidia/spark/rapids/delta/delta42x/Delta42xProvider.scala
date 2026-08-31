@@ -18,7 +18,8 @@ package com.nvidia.spark.rapids.delta.delta42x
 
 import com.nvidia.spark.rapids._
 import com.nvidia.spark.rapids.delta.GpuDeltaCatalogBase
-import com.nvidia.spark.rapids.delta.common.{DeleteCommandMeta, DeltaDynamicPartitionOverwriteCommandMeta, OptimizeTableCommandMeta, UpdateCommandMeta}
+import com.nvidia.spark.rapids.delta.common.{DeleteCommandMeta,
+  DeltaDynamicPartitionOverwriteCommandMeta, UpdateCommandMeta}
 import com.nvidia.spark.rapids.delta.common.{GpuDelta4xParquetFileFormat, GpuDeltaParquetFileFormat2}
 import com.nvidia.spark.rapids.delta.common.DeltaProviderBase
 
@@ -26,7 +27,8 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.sql.connector.catalog.SupportsWrite
 import org.apache.spark.sql.delta.{DeltaDynamicPartitionOverwriteCommand, DeltaParquetFileFormat}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.delta.commands.{DeleteCommand, MergeIntoCommand, OptimizeTableCommand, UpdateCommand}
+import org.apache.spark.sql.delta.commands.{DeleteCommand, MergeIntoCommand, OptimizeTableCommand,
+  UpdateCommand}
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.execution.datasources.v2.{AppendDataExecV1, OverwriteByExpressionExecV1}
@@ -87,7 +89,8 @@ object Delta42xProvider extends DeltaProviderBase with Logging {
           (a, conf, p, r) => new OptimizeTableCommandMeta(a, conf, p, r)),
       GpuOverrides.runnableCmd[DeltaDynamicPartitionOverwriteCommand](
         "Dynamic partition overwrite to a Delta Lake table",
-        (a, conf, p, r) => new DeltaDynamicPartitionOverwriteCommandMeta(a, conf, p, r))
+        (a, conf, p, r) => new DeltaDynamicPartitionOverwriteCommandMeta(a, conf, p, r)),
+      DeltaReorgTableCommandMeta.rule
     ).map(r => (r.getClassFor.asSubclass(classOf[RunnableCommand]), r)).toMap
   }
 

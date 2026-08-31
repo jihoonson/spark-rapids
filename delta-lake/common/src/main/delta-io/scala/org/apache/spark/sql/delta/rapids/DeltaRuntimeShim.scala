@@ -26,6 +26,8 @@ import org.apache.spark.sql.connector.catalog.StagingTableCatalog
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, DeltaOptions, Snapshot}
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
+import org.apache.spark.sql.delta.commands.WriteIntoDelta
+import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.expressions.UserDefinedFunction
 import org.apache.spark.util.Clock
@@ -44,6 +46,12 @@ trait DeltaRuntimeShim {
   def stringFromStringUdf(f: String => String): UserDefinedFunction
   def unsafeVolatileSnapshotFromLog(deltaLog: DeltaLog): Snapshot
   def fileFormatFromLog(deltaLog: DeltaLog): FileFormat
+
+  def createGpuWrite(
+      gpuDeltaLog: GpuDeltaLog,
+      cpuWrite: WriteIntoDelta): RunnableCommand = {
+    GpuWriteIntoDelta(gpuDeltaLog, cpuWrite)
+  }
 
   def buildWriteOperation(
       mode: SaveMode,
@@ -133,6 +141,12 @@ object DeltaRuntimeShim {
 
   def fileFormatFromLog(deltaLog: DeltaLog): FileFormat =
     shimInstance.fileFormatFromLog(deltaLog)
+
+  def createGpuWrite(
+      gpuDeltaLog: GpuDeltaLog,
+      cpuWrite: WriteIntoDelta): RunnableCommand = {
+    shimInstance.createGpuWrite(gpuDeltaLog, cpuWrite)
+  }
 
   def buildWriteOperation(
       mode: SaveMode,

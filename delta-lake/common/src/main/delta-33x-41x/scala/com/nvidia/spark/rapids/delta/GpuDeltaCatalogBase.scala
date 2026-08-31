@@ -38,10 +38,11 @@ import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaConfigs, Del
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.{TableCreationModes, WriteIntoDelta}
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.rapids.{DeltaTrampoline, GpuDeltaLog, GpuWriteIntoDelta}
+import org.apache.spark.sql.delta.rapids.{DeltaRuntimeShim, DeltaTrampoline, GpuDeltaLog}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.execution.datasources.DataSource
+import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.rapids.execution.ShimTrampolineUtil
 import org.apache.spark.sql.sources.InsertableRelation
@@ -64,10 +65,9 @@ abstract class GpuDeltaCatalogBase(
       withDb: CatalogTable,
       existingTableOpt: Option[CatalogTable],
       mode: SaveMode,
-      writer: Option[GpuWriteIntoDelta],
+      writer: Option[RunnableCommand],
       operation: TableCreationModes.CreationMode,
       isByPath: Boolean,
-      allowCatalogManaged: Boolean,
       tableCreateFunc: Option[CatalogTable => Unit]): Unit
 
   protected def getTableIdentifier(ident: Identifier): TableIdentifier = {
@@ -78,8 +78,6 @@ abstract class GpuDeltaCatalogBase(
       table: TableIdentifier,
       ident: Identifier,
       operation: TableCreationModes.CreationMode): Option[CatalogTable]
-
-  protected def allowCatalogManaged(tableType: CatalogTableType): Boolean = false
 
   protected def useCatalogCreateTable(sourceQuery: Option[DataFrame]): Boolean = {
     isUnityCatalog && sourceQuery.isEmpty
@@ -272,7 +270,7 @@ abstract class GpuDeltaCatalogBase(
         Some(tableDesc),
         schemaInCatalog = if (newSchema != schema) Some(newSchema) else None)
       val gpuDeltaLog = new GpuDeltaLog(deltaLog, rapidsConf)
-      GpuWriteIntoDelta(gpuDeltaLog, cpuWriter)
+      DeltaRuntimeShim.createGpuWrite(gpuDeltaLog, cpuWriter)
     }
 
 
@@ -298,7 +296,6 @@ abstract class GpuDeltaCatalogBase(
       writer,
       operation,
       isByPath = isByPath,
-      allowCatalogManaged = allowCatalogManaged(tableType),
       tableCreateFunc = tableCreateFunc)
 
     cpuCatalog.loadTable(ident)

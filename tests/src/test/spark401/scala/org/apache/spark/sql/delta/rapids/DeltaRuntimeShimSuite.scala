@@ -20,8 +20,14 @@
 spark-rapids-shim-json-lines ***/
 package org.apache.spark.sql.delta.rapids
 
-import com.nvidia.spark.rapids.SparkQueryCompareTestSuite
+import com.nvidia.spark.rapids.{RapidsConf, SparkQueryCompareTestSuite}
 import com.nvidia.spark.rapids.delta.{DeltaProvider, NoDeltaProvider}
+import org.scalatestplus.mockito.MockitoSugar.mock
+
+import org.apache.spark.sql.{Dataset, Row, SaveMode}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
+import org.apache.spark.sql.delta.commands.{WriteIntoDelta, WriteIntoDeltaLike}
+import org.apache.spark.sql.internal.SQLConf
 
 class DeltaRuntimeShimSuite extends SparkQueryCompareTestSuite {
   test("delta provider resolves from the installed Delta Lake version") {
@@ -74,5 +80,28 @@ class DeltaRuntimeShimSuite extends SparkQueryCompareTestSuite {
       assert(error.getMessage.contains(deltaVersion))
       assert(error.getMessage.contains(sparkVersion))
     }
+  }
+
+  test("Delta 4.2 GPU writes use the runtime-specific WriteIntoDeltaLike adapter") {
+    assume(io.delta.VERSION == "4.2.0")
+    val deltaLog = mock[DeltaLog]
+    val cpuWrite = WriteIntoDelta(
+      deltaLog,
+      SaveMode.Append,
+      new DeltaOptions(Map.empty[String, String], new SQLConf),
+      partitionColumns = Nil,
+      configuration = Map.empty,
+      data = mock[Dataset[Row]])
+    val gpuWrite = DeltaRuntimeShim.createGpuWrite(
+      new GpuDeltaLog(deltaLog, new RapidsConf(Map.empty[String, String])), cpuWrite)
+
+    assert(gpuWrite.getClass.getSimpleName == "GpuWriteIntoDelta42x")
+    val writeLike = gpuWrite.asInstanceOf[WriteIntoDeltaLike]
+    assert(writeLike.withNewWriterConfiguration(Map("key" -> "value"))
+      .getClass.getSimpleName == "GpuWriteIntoDelta42x")
+
+    val accessor = classOf[WriteIntoDeltaLike]
+      .getMethod("ReplaceWhereExprsAndDataFilterPresenceInExprs")
+    assert(accessor.invoke(writeLike) != null)
   }
 }

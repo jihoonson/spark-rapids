@@ -52,7 +52,7 @@ class DeltaDynamicPartitionOverwriteCommandMetaBase(
 
     RapidsDeltaUtils.tagForDeltaWrite(this, overwriteCommand.table.schema,
       Some(overwriteCommand.deltaTable.deltaLog),
-      Map.empty, overwriteCommand.deltaTable.spark)
+      overwriteCommand.writeOptions, overwriteCommand.deltaTable.spark)
   }
 
   override def convertToGpu(): RunnableCommand = {

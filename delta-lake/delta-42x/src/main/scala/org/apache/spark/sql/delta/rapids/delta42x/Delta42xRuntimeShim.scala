@@ -19,18 +19,24 @@ package org.apache.spark.sql.delta.rapids.delta42x
 import scala.util.Try
 
 import com.nvidia.spark.rapids.RapidsConf
-import com.nvidia.spark.rapids.delta.DeltaProvider
-import com.nvidia.spark.rapids.delta.delta42x.{Delta42xProvider, GpuDeltaCatalog}
+import com.nvidia.spark.rapids.delta.{DeltaConfigChecker, DeltaProvider}
+import com.nvidia.spark.rapids.delta.delta42x.{Delta42xConfigChecker, Delta42xProvider,
+  GpuDeltaCatalog}
 
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.connector.catalog.StagingTableCatalog
 import org.apache.spark.sql.delta.{DeltaOperations, DeltaOptions}
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
+import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.hooks.GpuAutoCompact42x
-import org.apache.spark.sql.delta.rapids.{DeltaRuntimeShimBase, GpuOptimisticTransaction, GpuOptimisticTransactionBase, StartTransactionArg}
+import org.apache.spark.sql.delta.rapids.{DeltaRuntimeShimBase, GpuDeltaLog, GpuOptimisticTransaction,
+  GpuOptimisticTransactionBase, StartTransactionArg}
+import org.apache.spark.sql.execution.command.RunnableCommand
 
 class Delta42xRuntimeShim extends DeltaRuntimeShimBase {
+
+  override def getDeltaConfigChecker: DeltaConfigChecker = Delta42xConfigChecker
 
   override def getDeltaProvider: DeltaProvider = Delta42xProvider
 
@@ -44,6 +50,12 @@ class Delta42xRuntimeShim extends DeltaRuntimeShimBase {
       arg: StartTransactionArg): GpuOptimisticTransactionBase =
     new GpuOptimisticTransaction(
       arg.log, arg.catalogTable, arg.snapshot, arg.conf, GpuAutoCompact42x)
+
+  override def createGpuWrite(
+      gpuDeltaLog: GpuDeltaLog,
+      cpuWrite: WriteIntoDelta): RunnableCommand = {
+    GpuWriteIntoDelta42x(gpuDeltaLog, cpuWrite)
+  }
 
   override def buildWriteOperation(
       mode: SaveMode,

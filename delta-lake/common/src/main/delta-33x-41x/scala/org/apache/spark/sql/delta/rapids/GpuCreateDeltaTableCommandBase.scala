@@ -240,7 +240,7 @@ abstract class GpuCreateDeltaTableCommandBase(
         case Some(deltaWriter: WriteIntoDeltaLike) =>
           checkPathEmpty(txn)
           handleCreateTableAsSelect(sparkSession, txn, gpuDeltaLog,
-            deltaWriter.asInstanceOf[GpuWriteIntoDelta], tableWithLocation)
+            deltaWriter, tableWithLocation)
           Nil
         case Some(query) =>
           checkPathEmpty(txn)
@@ -258,7 +258,11 @@ abstract class GpuCreateDeltaTableCommandBase(
               configuration = tableWithLocation.properties + ("comment" -> table.comment.orNull),
               data = data,
               Some(tableWithLocation))
-            GpuWriteIntoDelta(gpuDeltaLog, cpuWriter)
+            DeltaRuntimeShim.createGpuWrite(gpuDeltaLog, cpuWriter) match {
+              case write: WriteIntoDeltaLike => write
+              case other => throw new IllegalStateException(
+                s"Unexpected GPU Delta writer ${other.getClass.getName}")
+            }
           }
           handleCreateTableAsSelect(sparkSession, txn, gpuDeltaLog,
             deltaWriter, tableWithLocation)
@@ -319,7 +323,7 @@ abstract class GpuCreateDeltaTableCommandBase(
      sparkSession: SparkSession,
      txn: GpuOptimisticTransactionBase,
      gpuDeltaLog: GpuDeltaLog,
-     deltaWriter: GpuWriteIntoDelta,
+     deltaWriter: WriteIntoDeltaLike,
      tableWithLocation: CatalogTable): Unit = {
     val isManagedTable = tableWithLocation.tableType == CatalogTableType.MANAGED
     val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)

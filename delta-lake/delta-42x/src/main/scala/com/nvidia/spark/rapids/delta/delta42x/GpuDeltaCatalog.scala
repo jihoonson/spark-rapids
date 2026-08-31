@@ -29,9 +29,9 @@ import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.TableCreationModes
-import org.apache.spark.sql.delta.rapids.{GpuCreateDeltaTableCommand40x41xBase,
-  GpuDeltaCatalog4x, GpuWriteIntoDelta}
+import org.apache.spark.sql.delta.rapids.{GpuCreateDeltaTableCommand40x41xBase, GpuDeltaCatalog4x}
 import org.apache.spark.sql.delta.rapids.delta42x.GpuCreateDeltaTableCommand
+import org.apache.spark.sql.execution.command.RunnableCommand
 
 class GpuDeltaCatalog(
     cpuCatalog: DeltaCatalog,
@@ -60,10 +60,6 @@ class GpuDeltaCatalog(
     cpuCatalog.getExistingTableIfExists(table, Some(ident), operation)
   }
 
-  override protected def allowCatalogManaged(tableType: CatalogTableType): Boolean = {
-    isUnityCatalog && tableType == CatalogTableType.MANAGED
-  }
-
   override protected def useCatalogCreateTable(sourceQuery: Option[DataFrame]): Boolean = {
     isUnityCatalog
   }
@@ -72,10 +68,9 @@ class GpuDeltaCatalog(
       withDb: CatalogTable,
       existingTableOpt: Option[CatalogTable],
       mode: SaveMode,
-      writer: Option[GpuWriteIntoDelta],
+      writer: Option[RunnableCommand],
       operation: TableCreationModes.CreationMode,
       isByPath: Boolean,
-      allowCatalogManaged: Boolean,
       tableCreateFunc: Option[CatalogTable => Unit]): GpuCreateDeltaTableCommand40x41xBase = {
     GpuCreateDeltaTableCommand(
       withDb,
@@ -84,7 +79,7 @@ class GpuDeltaCatalog(
       writer,
       operation,
       tableByPath = isByPath,
-      allowCatalogManaged = allowCatalogManaged,
+      allowCatalogManaged = isUnityCatalog && withDb.tableType == CatalogTableType.MANAGED,
       createTableFunc = tableCreateFunc)(rapidsConf)
   }
 }
