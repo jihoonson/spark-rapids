@@ -34,8 +34,9 @@ case object GpuAutoCompact42x extends GpuAutoCompactBase {
       txn: CommittedTransaction): Unit = {
     val conf = spark.sessionState.conf
     val autoCompactTypeOpt = getAutoCompactType(conf, txn.postCommitSnapshot.metadata)
-    if (shouldSkipAutoCompact(autoCompactTypeOpt, spark, txn)) return
-    compactIfNecessary(spark, txn)
+    if (!shouldSkipAutoCompact(autoCompactTypeOpt, spark, txn)) {
+      compactIfNecessary(spark, txn)
+    }
   }
 
   private def compactIfNecessary(
