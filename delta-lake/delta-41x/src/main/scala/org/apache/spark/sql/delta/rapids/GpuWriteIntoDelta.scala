@@ -1,5 +1,10 @@
 /*
- * Copyright (c) 2026, NVIDIA CORPORATION.
+ * Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ *
+ * This file was derived from WriteIntoDelta.scala
+ * in the Delta Lake project at https://github.com/delta-io/delta.
+ *
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,32 +19,24 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.rapids.delta42x
+package org.apache.spark.sql.delta.rapids
 
 import org.apache.spark.sql.delta.DeltaOperations
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
-import org.apache.spark.sql.delta.rapids.{DeltaRuntimeShim, GpuDeltaLog, GpuWriteIntoDeltaBase,
-  GpuWriteIntoDeltaLike}
 
-/**
- * GPU version of Delta 4.2's WriteIntoDelta.
- *
- * This class must have a different FQCN from GpuWriteIntoDelta because aggregate JARs contain both
- * the Delta 4.0/4.1 and Delta 4.2 adapters. Sharing an FQCN would cause one version-linked class to
- * replace the other during shading.
- */
-case class GpuWriteIntoDelta42x(
+/** GPU version of Delta Lake's WriteIntoDelta. */
+case class GpuWriteIntoDelta(
     override val gpuDeltaLog: GpuDeltaLog,
     override val cpuWrite: WriteIntoDelta)
-  extends GpuWriteIntoDeltaBase(gpuDeltaLog, cpuWrite)
-    with GpuWriteIntoDeltaLike {
+    extends GpuWriteIntoDeltaBase(gpuDeltaLog, cpuWrite)
+      with GpuWriteIntoDeltaLike {
 
   override protected def buildCommitMetadata: DeltaOperations.Operation = {
     DeltaRuntimeShim.buildWriteOperation(
       cpuWrite.mode, cpuWrite.partitionColumns, cpuWrite.options)
   }
 
-  override protected def copyWithCpuWrite(newCpuWrite: WriteIntoDelta): GpuWriteIntoDelta42x = {
+  override protected def copyWithCpuWrite(newCpuWrite: WriteIntoDelta): GpuWriteIntoDelta = {
     copy(cpuWrite = newCpuWrite)
   }
 }

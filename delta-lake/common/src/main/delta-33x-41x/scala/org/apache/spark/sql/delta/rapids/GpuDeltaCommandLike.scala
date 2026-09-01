@@ -16,10 +16,13 @@
 
 package org.apache.spark.sql.delta.rapids
 
-import org.apache.spark.sql.delta.commands.WriteIntoDeltaLike
+import org.apache.spark.sql.delta.commands.DeltaCommand
 
-/** Common type for GPU counterparts of Delta's WriteIntoDeltaLike. */
-trait GpuWriteIntoDeltaLike extends WriteIntoDeltaLike with GpuDeltaCommandLike {
-  override def withNewWriterConfiguration(
-      updatedConfiguration: Map[String, String]): GpuWriteIntoDeltaLike
-}
+/**
+ * Stable DeltaCommand parent for GPU Delta commands.
+ *
+ * Delta 4.2 adds DeltaCommand as a parent of WriteIntoDeltaLike. Keeping DeltaCommand behind this
+ * plugin-owned type prevents that upstream inheritance change from altering the JVM parents of
+ * shared GPU command interfaces.
+ */
+trait GpuDeltaCommandLike extends DeltaCommand
