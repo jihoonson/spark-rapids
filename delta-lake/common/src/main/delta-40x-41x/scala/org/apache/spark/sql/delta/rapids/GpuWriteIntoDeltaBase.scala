@@ -33,7 +33,7 @@ import org.apache.spark.sql.classic.{SparkSession => ClassicSparkSession}
 import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaErrors, DeltaLog,
   DeltaOperations, DeltaOptions, DeltaTableUtils, IdentityColumn, OptimisticTransaction}
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, FileAction, RemoveFile}
-import org.apache.spark.sql.delta.commands.{DeleteCommand, DeltaCommand, WriteIntoDelta, WriteIntoDeltaLike}
+import org.apache.spark.sql.delta.commands.{DeleteCommand, WriteIntoDelta}
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, InvariantViolationException, SchemaUtils}
@@ -48,18 +48,17 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 
 /**
- * Shared Delta 4.0/4.1 implementation of GPU WriteIntoDelta.
+ * Shared implementation of the GPU WriteIntoDeltaLike contract for Delta 4.0 through 4.2.
  *
- * The write path is identical across the two runtimes except for the commit operation metadata
- * captured in DeltaOperations.Write.
+ * The self-type deliberately keeps the version-specific GpuWriteIntoDeltaLike contract off this
+ * base class's JVM interface list. Delta 4.1 and 4.2 adapters share this base class name in the
+ * aggregate JAR, while their WriteIntoDeltaLike interfaces are not binary compatible.
  */
 abstract class GpuWriteIntoDeltaBase(
     val gpuDeltaLog: GpuDeltaLog,
     val cpuWrite: WriteIntoDelta)
     extends LeafRunnableCommand
-      with ImplicitMetadataOperation
-      with DeltaCommand
-      with WriteIntoDeltaLike {
+      with ImplicitMetadataOperation { self: GpuWriteIntoDeltaLike =>
 
   override protected val canMergeSchema: Boolean = cpuWrite.options.canMergeSchema
 
@@ -82,7 +81,7 @@ abstract class GpuWriteIntoDeltaBase(
    * Recreate the GPU write command around an updated CPU `WriteIntoDelta` while preserving the
    * concrete GPU subclass used by the current Delta runtime.
    */
-  protected def copyWithCpuWrite(newCpuWrite: WriteIntoDelta): GpuWriteIntoDeltaBase
+  protected def copyWithCpuWrite(newCpuWrite: WriteIntoDelta): GpuWriteIntoDeltaLike
 
   override def run(sparkSession: SqlSparkSession): Seq[Row] = {
     gpuDeltaLog.withNewTransaction(cpuWrite.catalogTableOpt) { txn =>
@@ -408,7 +407,7 @@ abstract class GpuWriteIntoDeltaBase(
   }
 
   override def withNewWriterConfiguration(updatedConfiguration: Map[String, String])
-  : WriteIntoDeltaLike = {
+  : GpuWriteIntoDeltaLike = {
     val newCpuWrite = cpuWrite.copy(configuration = updatedConfiguration)
     copyWithCpuWrite(newCpuWrite)
   }

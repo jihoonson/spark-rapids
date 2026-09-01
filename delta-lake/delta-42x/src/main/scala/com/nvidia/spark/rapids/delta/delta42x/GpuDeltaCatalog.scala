@@ -25,7 +25,7 @@ import com.nvidia.spark.rapids.RapidsConf
 
 import org.apache.spark.sql.{DataFrame, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.TableCreationModes
@@ -79,7 +79,6 @@ class GpuDeltaCatalog(
       writer,
       operation,
       tableByPath = isByPath,
-      allowCatalogManaged = isUnityCatalog && withDb.tableType == CatalogTableType.MANAGED,
       createTableFunc = tableCreateFunc)(rapidsConf)
   }
 }

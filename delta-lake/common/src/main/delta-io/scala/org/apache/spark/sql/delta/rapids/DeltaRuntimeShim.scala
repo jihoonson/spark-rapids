@@ -27,7 +27,6 @@ import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, DeltaOptions, Snap
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
-import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.expressions.UserDefinedFunction
 import org.apache.spark.util.Clock
@@ -49,9 +48,7 @@ trait DeltaRuntimeShim {
 
   def createGpuWrite(
       gpuDeltaLog: GpuDeltaLog,
-      cpuWrite: WriteIntoDelta): RunnableCommand = {
-    GpuWriteIntoDelta(gpuDeltaLog, cpuWrite)
-  }
+      cpuWrite: WriteIntoDelta): GpuWriteIntoDeltaLike
 
   def buildWriteOperation(
       mode: SaveMode,
@@ -144,7 +141,7 @@ object DeltaRuntimeShim {
 
   def createGpuWrite(
       gpuDeltaLog: GpuDeltaLog,
-      cpuWrite: WriteIntoDelta): RunnableCommand = {
+      cpuWrite: WriteIntoDelta): GpuWriteIntoDeltaLike = {
     shimInstance.createGpuWrite(gpuDeltaLog, cpuWrite)
   }
 

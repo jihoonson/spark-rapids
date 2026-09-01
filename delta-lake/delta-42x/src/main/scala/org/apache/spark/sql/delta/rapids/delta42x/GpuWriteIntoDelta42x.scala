@@ -16,46 +16,24 @@
 
 package org.apache.spark.sql.delta.rapids.delta42x
 
-import org.apache.spark.sql.{DataFrame, Row, SparkSession}
-import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction}
-import org.apache.spark.sql.delta.actions.Action
-import org.apache.spark.sql.delta.commands.{WriteIntoDelta, WriteIntoDeltaLike}
-import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
-import org.apache.spark.sql.delta.rapids.{GpuDeltaLog, GpuWriteIntoDelta}
-import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
-import org.apache.spark.sql.execution.command.LeafRunnableCommand
+import org.apache.spark.sql.delta.DeltaOperations
+import org.apache.spark.sql.delta.commands.WriteIntoDelta
+import org.apache.spark.sql.delta.rapids.{DeltaRuntimeShim, GpuDeltaLog, GpuWriteIntoDeltaBase,
+  GpuWriteIntoDeltaLike}
 
-/**
- * Delta 4.2 adapter for the shared GPU WriteIntoDelta implementation.
- *
- * Delta 4.2 added a nested result type to [[WriteIntoDeltaLike]], which adds a JVM trait accessor
- * that is absent from the Delta 4.0/4.1 copy of [[GpuWriteIntoDelta]] retained by the aggregate
- * JAR. Mixing in the Delta 4.2 trait here supplies that accessor while the existing GPU write
- * implementation continues to handle the Delta 4.1-compatible behavior.
- */
+/** GPU version of Delta 4.2's WriteIntoDelta. */
 case class GpuWriteIntoDelta42x(
-    gpuDeltaLog: GpuDeltaLog,
-    cpuWrite: WriteIntoDelta)
-  extends LeafRunnableCommand with WriteIntoDeltaLike {
+    override val gpuDeltaLog: GpuDeltaLog,
+    override val cpuWrite: WriteIntoDelta)
+  extends GpuWriteIntoDeltaBase(gpuDeltaLog, cpuWrite)
+    with GpuWriteIntoDeltaLike {
 
-  private def delegate: GpuWriteIntoDelta = GpuWriteIntoDelta(gpuDeltaLog, cpuWrite)
-
-  override def run(sparkSession: SparkSession): Seq[Row] = delegate.run(sparkSession)
-
-  override def withNewWriterConfiguration(
-      updatedConfiguration: Map[String, String]): WriteIntoDeltaLike = {
-    copy(cpuWrite = cpuWrite.copy(configuration = updatedConfiguration))
+  override protected def buildCommitMetadata: DeltaOperations.Operation = {
+    DeltaRuntimeShim.buildWriteOperation(
+      cpuWrite.mode, cpuWrite.partitionColumns, cpuWrite.options)
   }
 
-  override val configuration: Map[String, String] = cpuWrite.configuration
-  override val data: DataFrame = cpuWrite.data
-  override val deltaLog: DeltaLog = gpuDeltaLog.deltaLog
-
-  override def writeAndReturnCommitData(
-      txn: OptimisticTransaction,
-      sparkSession: SparkSession,
-      clusterBySpecOpt: Option[ClusterBySpec],
-      isTableReplace: Boolean): TaggedCommitData[Action] = {
-    delegate.writeAndReturnCommitData(txn, sparkSession, clusterBySpecOpt, isTableReplace)
+  override protected def copyWithCpuWrite(newCpuWrite: WriteIntoDelta): GpuWriteIntoDelta42x = {
+    copy(cpuWrite = newCpuWrite)
   }
 }

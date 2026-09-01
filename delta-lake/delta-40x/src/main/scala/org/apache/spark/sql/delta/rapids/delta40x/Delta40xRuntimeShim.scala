@@ -26,9 +26,11 @@ import org.apache.spark.sql.connector.catalog.StagingTableCatalog
 import org.apache.spark.sql.delta.{DeltaOperations, DeltaOptions}
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
+import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.hooks.GpuAutoCompact40x
-import org.apache.spark.sql.delta.rapids.{DeltaRuntimeShimBase, GpuOptimisticTransaction,
-  GpuOptimisticTransactionBase, StartTransactionArg}
+import org.apache.spark.sql.delta.rapids.{DeltaRuntimeShimBase, GpuDeltaLog,
+  GpuOptimisticTransaction, GpuOptimisticTransactionBase, GpuWriteIntoDelta,
+  GpuWriteIntoDeltaLike, StartTransactionArg}
 
 /**
  * Delta runtime shim for Delta 4.0.x on Spark 4.0.x.
@@ -38,6 +40,12 @@ import org.apache.spark.sql.delta.rapids.{DeltaRuntimeShimBase, GpuOptimisticTra
 class Delta40xRuntimeShim extends DeltaRuntimeShimBase {
 
   override def getDeltaProvider: DeltaProvider = Delta40xProvider
+
+  override def createGpuWrite(
+      gpuDeltaLog: GpuDeltaLog,
+      cpuWrite: WriteIntoDelta): GpuWriteIntoDeltaLike = {
+    GpuWriteIntoDelta(gpuDeltaLog, cpuWrite)
+  }
 
   override def getGpuDeltaCatalog(
      cpuCatalog: DeltaCatalog,

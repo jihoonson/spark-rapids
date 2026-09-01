@@ -258,11 +258,7 @@ abstract class GpuCreateDeltaTableCommandBase(
               configuration = tableWithLocation.properties + ("comment" -> table.comment.orNull),
               data = data,
               Some(tableWithLocation))
-            DeltaRuntimeShim.createGpuWrite(gpuDeltaLog, cpuWriter) match {
-              case write: WriteIntoDeltaLike => write
-              case other => throw new IllegalStateException(
-                s"Unexpected GPU Delta writer ${other.getClass.getName}")
-            }
+            DeltaRuntimeShim.createGpuWrite(gpuDeltaLog, cpuWriter)
           }
           handleCreateTableAsSelect(sparkSession, txn, gpuDeltaLog,
             deltaWriter, tableWithLocation)

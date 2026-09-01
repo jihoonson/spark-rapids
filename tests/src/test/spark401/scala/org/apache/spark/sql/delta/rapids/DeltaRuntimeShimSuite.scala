@@ -20,6 +20,8 @@
 spark-rapids-shim-json-lines ***/
 package org.apache.spark.sql.delta.rapids
 
+import java.lang.reflect.Modifier
+
 import com.nvidia.spark.rapids.{RapidsConf, SparkQueryCompareTestSuite}
 import com.nvidia.spark.rapids.delta.{DeltaProvider, NoDeltaProvider}
 import org.scalatestplus.mockito.MockitoSugar.mock
@@ -27,6 +29,8 @@ import org.scalatestplus.mockito.MockitoSugar.mock
 import org.apache.spark.sql.{Dataset, Row, SaveMode}
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
 import org.apache.spark.sql.delta.commands.{WriteIntoDelta, WriteIntoDeltaLike}
+import org.apache.spark.sql.delta.schema.ImplicitMetadataOperation
+import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.internal.SQLConf
 
 class DeltaRuntimeShimSuite extends SparkQueryCompareTestSuite {
@@ -82,7 +86,13 @@ class DeltaRuntimeShimSuite extends SparkQueryCompareTestSuite {
     }
   }
 
-  test("Delta 4.2 GPU writes use the runtime-specific WriteIntoDeltaLike adapter") {
+  test("GPU write factory has no default implementation") {
+    val method = classOf[DeltaRuntimeShim].getMethod(
+      "createGpuWrite", classOf[GpuDeltaLog], classOf[WriteIntoDelta])
+    assert(Modifier.isAbstract(method.getModifiers))
+  }
+
+  test("Delta 4.2 GPU writes use the runtime-specific GPU implementation") {
     assume(io.delta.VERSION == "4.2.0")
     val deltaLog = mock[DeltaLog]
     val cpuWrite = WriteIntoDelta(
@@ -96,12 +106,14 @@ class DeltaRuntimeShimSuite extends SparkQueryCompareTestSuite {
       new GpuDeltaLog(deltaLog, new RapidsConf(Map.empty[String, String])), cpuWrite)
 
     assert(gpuWrite.getClass.getSimpleName == "GpuWriteIntoDelta42x")
-    val writeLike = gpuWrite.asInstanceOf[WriteIntoDeltaLike]
-    assert(writeLike.withNewWriterConfiguration(Map("key" -> "value"))
+    assert(gpuWrite.isInstanceOf[GpuWriteIntoDeltaBase])
+    assert(gpuWrite.isInstanceOf[LeafRunnableCommand])
+    assert(gpuWrite.isInstanceOf[ImplicitMetadataOperation])
+    assert(gpuWrite.withNewWriterConfiguration(Map("key" -> "value"))
       .getClass.getSimpleName == "GpuWriteIntoDelta42x")
 
     val accessor = classOf[WriteIntoDeltaLike]
       .getMethod("ReplaceWhereExprsAndDataFilterPresenceInExprs")
-    assert(accessor.invoke(writeLike) != null)
+    assert(accessor.invoke(gpuWrite) != null)
   }
 }

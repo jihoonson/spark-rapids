@@ -50,7 +50,7 @@ abstract class GpuDeltaCatalog4x(
       withDb: CatalogTable,
       existingTableOpt: Option[CatalogTable],
       mode: SaveMode,
-      writer: Option[RunnableCommand],
+      writer: Option[GpuWriteIntoDeltaLike],
       operation: TableCreationModes.CreationMode,
       isByPath: Boolean,
       tableCreateFunc: Option[CatalogTable => Unit]): Unit = {
@@ -58,7 +58,7 @@ abstract class GpuDeltaCatalog4x(
       withDb,
       existingTableOpt,
       mode,
-      writer,
+      writer.map(_.asInstanceOf[RunnableCommand]),
       operation,
       isByPath,
       tableCreateFunc).run(spark)

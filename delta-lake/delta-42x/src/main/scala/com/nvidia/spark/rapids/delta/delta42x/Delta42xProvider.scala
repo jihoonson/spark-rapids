@@ -24,16 +24,50 @@ import com.nvidia.spark.rapids.delta.common.{GpuDelta4xParquetFileFormat, GpuDel
 import com.nvidia.spark.rapids.delta.common.DeltaProviderBase
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connector.catalog.SupportsWrite
-import org.apache.spark.sql.delta.{DeltaDynamicPartitionOverwriteCommand, DeltaParquetFileFormat}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, DeltaDynamicPartitionOverwriteCommand,
+  DeltaParquetFileFormat}
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{DeleteCommand, MergeIntoCommand, OptimizeTableCommand,
   UpdateCommand}
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTableUtils
+import org.apache.spark.sql.delta.serverSidePlanning.ServerSidePlannedTable
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.datasources.FileFormat
-import org.apache.spark.sql.execution.datasources.v2.{AppendDataExecV1, OverwriteByExpressionExecV1}
+import org.apache.spark.sql.execution.datasources.v2.{AppendDataExecV1, AtomicCreateTableAsSelectExec,
+  AtomicReplaceTableAsSelectExec, OverwriteByExpressionExecV1}
 
 object Delta42xProvider extends DeltaProviderBase with Logging {
+
+  private def tagCatalogManagedTable(
+      meta: RapidsMeta[_, _, _],
+      properties: Map[String, String],
+      spark: SparkSession): Unit = {
+    val tableFeatures =
+      TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(properties)
+    if (tableFeatures.contains(CatalogOwnedTableFeature) ||
+        CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark)) {
+      meta.willNotWorkOnGpu("Delta 4.2 catalog-managed table writes are not supported on GPU")
+    }
+  }
+
+  private def tagExistingCatalogManagedTable(
+      meta: RapidsMeta[_, _, _],
+      cpuExec: AtomicReplaceTableAsSelectExec): Unit = {
+    if (cpuExec.catalog.tableExists(cpuExec.ident)) {
+      cpuExec.catalog.loadTable(cpuExec.ident) match {
+        case table: DeltaTableV2 if table.deltaLog.unsafeVolatileSnapshot.isCatalogOwned =>
+          meta.willNotWorkOnGpu(
+            "Delta 4.2 catalog-managed table writes are not supported on GPU")
+        case _: ServerSidePlannedTable =>
+          meta.willNotWorkOnGpu(
+            "Delta 4.2 server-side planned table replacement is not supported on GPU")
+        case _ =>
+      }
+    }
+  }
 
   override def isSupportedWrite(write: Class[_ <: SupportsWrite]): Boolean = {
     write == classOf[DeltaTableV2] || write == classOf[GpuDeltaCatalogBase#GpuStagedDeltaTableV2]
@@ -41,6 +75,21 @@ object Delta42xProvider extends DeltaProviderBase with Logging {
 
   override def isSupportedFormat(format: Class[_ <: FileFormat]): Boolean =
     super.isSupportedFormat(format) || format == classOf[GpuDelta4xParquetFileFormat]
+
+  override def tagForGpu(
+      cpuExec: AtomicCreateTableAsSelectExec,
+      meta: AtomicCreateTableAsSelectExecMeta): Unit = {
+    super.tagForGpu(cpuExec, meta)
+    tagCatalogManagedTable(meta, cpuExec.properties, cpuExec.session)
+  }
+
+  override def tagForGpu(
+      cpuExec: AtomicReplaceTableAsSelectExec,
+      meta: AtomicReplaceTableAsSelectExecMeta): Unit = {
+    super.tagForGpu(cpuExec, meta)
+    tagCatalogManagedTable(meta, cpuExec.properties, cpuExec.session)
+    tagExistingCatalogManagedTable(meta, cpuExec)
+  }
 
   override def tagForGpu(
       cpuExec: AppendDataExecV1,

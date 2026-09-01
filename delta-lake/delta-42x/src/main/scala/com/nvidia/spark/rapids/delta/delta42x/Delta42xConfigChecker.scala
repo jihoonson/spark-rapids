@@ -25,7 +25,7 @@ import org.apache.spark.sql.internal.SQLConf
 object Delta42xConfigChecker extends DeltaConfigChecker {
   override def checkIncompatibleConfs(
       meta: RapidsMeta[_, _, _],
-      _deltaLog: Option[DeltaLog],
+      deltaLog: Option[DeltaLog],
       sqlConf: SQLConf,
       options: Map[String, String]): Unit = {
     val deltaOptions = new DeltaOptions(options, sqlConf)
@@ -38,6 +38,9 @@ object Delta42xConfigChecker extends DeltaConfigChecker {
     if (deltaOptions.useNullIntolerantEqualityWithDPO.isDefined) {
       meta.willNotWorkOnGpu(
         "Delta 4.2 null-intolerant dynamic partition overwrite is not supported on GPU")
+    }
+    if (deltaLog.exists(_.unsafeVolatileSnapshot.isCatalogOwned)) {
+      meta.willNotWorkOnGpu("Delta 4.2 catalog-managed table writes are not supported on GPU")
     }
   }
 }

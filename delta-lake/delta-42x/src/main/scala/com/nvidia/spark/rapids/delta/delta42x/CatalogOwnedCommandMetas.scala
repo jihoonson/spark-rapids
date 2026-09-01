@@ -18,25 +18,65 @@ package com.nvidia.spark.rapids.delta.delta42x
 
 import scala.reflect.classTag
 
-import com.nvidia.spark.rapids.{DataFromReplacementRule, RapidsConf, RapidsMeta,
-  RunnableCommandRule}
+import com.nvidia.spark.rapids._
+import com.nvidia.spark.rapids.delta.RapidsDeltaUtils
+import com.nvidia.spark.rapids.delta.common.{DeltaReorgTableCommandMetaBase,
+  OptimizeTableCommandMetaBase}
 
-import org.apache.spark.sql.delta.commands.{DeltaCommand, DeltaReorgTableCommand,
-  OptimizeTableCommand}
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.delta.{DeltaLog, IcebergCompat, RowTracking, UniversalFormat}
+import org.apache.spark.sql.delta.commands.{DeletionVectorUtils, DeltaCommand,
+  DeltaReorgTableCommand, DeltaReorgTableMode, OptimizeTableCommand}
+import org.apache.spark.sql.delta.rapids.{GpuDeltaReorgTableCommand, GpuOptimizeTableCommand}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.execution.command.RunnableCommand
 
 class OptimizeTableCommandMeta(
     cmd: OptimizeTableCommand,
     conf: RapidsConf,
     parent: Option[RapidsMeta[_, _, _]],
     rule: DataFromReplacementRule)
-  extends com.nvidia.spark.rapids.delta.common.OptimizeTableCommandMeta(
-    cmd, conf, parent, rule) {
+  extends OptimizeTableCommandMetaBase(cmd, conf, parent, rule) {
+
+  private object DeltaCmdProxy extends DeltaCommand
+
+  override protected def getDeltaLogForOptimize(): DeltaLog = {
+    DeltaCmdProxy.getDeltaTable(cmd.child, "OPTIMIZE").deltaLog
+  }
 
   override def tagSelfForGpu(): Unit = {
-    super.tagSelfForGpu()
-    if (getDeltaLogForOptimize().unsafeVolatileSnapshot.isCatalogOwned) {
+    if (!conf.isDeltaWriteEnabled) {
+      willNotWorkOnGpu("Delta Lake output acceleration has been disabled. To enable set " +
+        s"${RapidsConf.ENABLE_DELTA_WRITE} to true")
+    }
+
+    val deltaLog = getDeltaLogForOptimize()
+    val snapshot = deltaLog.unsafeVolatileSnapshot
+
+    if (DeletionVectorUtils.deletionVectorsWritable(snapshot) &&
+        cmd.conf.getConf(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS)) {
+      willNotWorkOnGpu("Deletion vectors are not supported on GPU")
+    }
+
+    if (cmd.zOrderBy.nonEmpty) {
+      willNotWorkOnGpu("Z-Order optimize is not supported on GPU")
+    }
+
+    RapidsDeltaUtils.tagForDeltaWrite(
+      this,
+      snapshot.schema,
+      Some(deltaLog),
+      Map.empty,
+      SparkSession.active)
+
+    if (snapshot.isCatalogOwned) {
       willNotWorkOnGpu("Delta 4.2 requires catalog-managed OPTIMIZE to run on CPU")
     }
+  }
+
+  override def convertToGpu(): RunnableCommand = {
+    GpuOptimizeTableCommand(cmd.child, cmd.userPartitionPredicates, cmd.optimizeContext)(
+      cmd.zOrderBy)
   }
 }
 
@@ -59,16 +99,47 @@ class DeltaReorgTableCommandMeta(
     conf: RapidsConf,
     parent: Option[RapidsMeta[_, _, _]],
     rule: DataFromReplacementRule)
-  extends com.nvidia.spark.rapids.delta.common.DeltaReorgTableCommandMeta(
-    cmd, conf, parent, rule) {
+  extends DeltaReorgTableCommandMetaBase(cmd, conf, parent, rule) {
 
   private object DeltaCmdProxy extends DeltaCommand
 
   override def tagSelfForGpu(): Unit = {
-    super.tagSelfForGpu()
-    val snapshot = DeltaCmdProxy.getDeltaTable(cmd.target, "REORG").deltaLog.unsafeVolatileSnapshot
+    if (!conf.isDeltaWriteEnabled) {
+      willNotWorkOnGpu("Delta Lake output acceleration has been disabled. To enable set " +
+        s"${RapidsConf.ENABLE_DELTA_WRITE} to true")
+    }
+
+    if (cmd.reorgTableSpec.reorgTableMode != DeltaReorgTableMode.PURGE ||
+        cmd.reorgTableSpec.icebergCompatVersionOpt.nonEmpty) {
+      willNotWorkOnGpu("Only Delta REORG TABLE APPLY (PURGE) is supported on GPU")
+    }
+
+    val table = DeltaCmdProxy.getDeltaTable(cmd.target, "REORG")
+    val snapshot = table.deltaLog.unsafeVolatileSnapshot
+    if (IcebergCompat.isAnyEnabled(snapshot.metadata) ||
+        UniversalFormat.icebergEnabled(snapshot.metadata)) {
+      willNotWorkOnGpu(
+        "Delta REORG TABLE is not supported on GPU for Iceberg-compatible tables")
+    }
+    if (RowTracking.isEnabled(snapshot.protocol, snapshot.metadata)) {
+      willNotWorkOnGpu(
+        "Delta REORG TABLE is not supported on GPU for row-tracking tables")
+    }
+
+    FileFormatChecks.tag(this, snapshot.schema, ParquetFormatType, ReadFileOp)
+    RapidsDeltaUtils.tagForDeltaWrite(
+      this,
+      snapshot.schema,
+      Some(table.deltaLog),
+      Map.empty,
+      SparkSession.active)
+
     if (snapshot.isCatalogOwned) {
       willNotWorkOnGpu("Delta 4.2 requires catalog-managed REORG to run on CPU")
     }
+  }
+
+  override def convertToGpu(): RunnableCommand = {
+    GpuDeltaReorgTableCommand(cmd.target)(cmd.predicates)
   }
 }

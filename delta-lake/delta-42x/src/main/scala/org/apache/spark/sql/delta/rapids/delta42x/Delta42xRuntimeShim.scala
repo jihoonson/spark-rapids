@@ -31,8 +31,7 @@ import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.hooks.GpuAutoCompact42x
 import org.apache.spark.sql.delta.rapids.{DeltaRuntimeShimBase, GpuDeltaLog, GpuOptimisticTransaction,
-  GpuOptimisticTransactionBase, StartTransactionArg}
-import org.apache.spark.sql.execution.command.RunnableCommand
+  GpuOptimisticTransactionBase, GpuWriteIntoDeltaLike, StartTransactionArg}
 
 class Delta42xRuntimeShim extends DeltaRuntimeShimBase {
 
@@ -53,7 +52,7 @@ class Delta42xRuntimeShim extends DeltaRuntimeShimBase {
 
   override def createGpuWrite(
       gpuDeltaLog: GpuDeltaLog,
-      cpuWrite: WriteIntoDelta): RunnableCommand = {
+      cpuWrite: WriteIntoDelta): GpuWriteIntoDeltaLike = {
     GpuWriteIntoDelta42x(gpuDeltaLog, cpuWrite)
   }
 

@@ -74,6 +74,6 @@ case class GpuDeltaDynamicPartitionOverwriteCommand(
         shims.createDataFrame(operationSession, query),
         deltaTable.catalogTable
       )
-    ).run(sparkSession)
+    ).asInstanceOf[RunnableCommand].run(sparkSession)
   }
 }

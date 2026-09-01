@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, DeltaOptions}
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.rapids.{DeltaRuntimeShim, GpuDeltaLog}
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
+import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.sources.BaseRelation
 
 /** GPU version of DeltaDataSource from Delta Lake. */
@@ -54,7 +55,7 @@ class GpuDeltaDataSource(rapidsConf: RapidsConf) extends GpuCreatableRelationPro
         partitionColumns = partitionColumns,
         configuration = DeltaConfigs.validateConfigurations(
           parameters.filterKeys(_.startsWith("delta.")).toMap),
-        data = data)).run(sqlContext.sparkSession)
+        data = data)).asInstanceOf[LeafRunnableCommand].run(sqlContext.sparkSession)
 
     gpuDeltaLog.deltaLog.createRelation()
   }

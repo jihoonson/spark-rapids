@@ -38,11 +38,11 @@ import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaConfigs, Del
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.{TableCreationModes, WriteIntoDelta}
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.rapids.{DeltaRuntimeShim, DeltaTrampoline, GpuDeltaLog}
+import org.apache.spark.sql.delta.rapids.{DeltaRuntimeShim, DeltaTrampoline, GpuDeltaLog,
+  GpuWriteIntoDeltaLike}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.execution.datasources.DataSource
-import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.rapids.execution.ShimTrampolineUtil
 import org.apache.spark.sql.sources.InsertableRelation
@@ -65,7 +65,7 @@ abstract class GpuDeltaCatalogBase(
       withDb: CatalogTable,
       existingTableOpt: Option[CatalogTable],
       mode: SaveMode,
-      writer: Option[RunnableCommand],
+      writer: Option[GpuWriteIntoDeltaLike],
       operation: TableCreationModes.CreationMode,
       isByPath: Boolean,
       tableCreateFunc: Option[CatalogTable => Unit]): Unit

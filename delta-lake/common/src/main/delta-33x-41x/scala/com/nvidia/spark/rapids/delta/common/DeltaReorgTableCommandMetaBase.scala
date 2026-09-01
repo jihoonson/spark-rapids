@@ -14,25 +14,16 @@
  * limitations under the License.
  */
 
-package com.nvidia.spark.rapids.delta.delta42x
+package com.nvidia.spark.rapids.delta.common
 
-import com.nvidia.spark.rapids.{DataFromReplacementRule, RapidsConf, RapidsMeta}
-import com.nvidia.spark.rapids.delta.common.MergeIntoCommandMetaBase
+import com.nvidia.spark.rapids.{DataFromReplacementRule, RapidsConf, RapidsMeta,
+  RunnableCommandMeta}
 
-import org.apache.spark.sql.delta.commands.MergeIntoCommand
-import org.apache.spark.sql.delta.rapids.delta42x.GpuMergeIntoCommand42x
-import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.delta.commands.DeltaReorgTableCommand
 
-class MergeIntoCommandMeta(
-    mergeCmd: MergeIntoCommand,
+abstract class DeltaReorgTableCommandMetaBase(
+    cmd: DeltaReorgTableCommand,
     conf: RapidsConf,
     parent: Option[RapidsMeta[_, _, _]],
     rule: DataFromReplacementRule)
-  extends MergeIntoCommandMetaBase(mergeCmd, conf, parent, rule) {
-
-  override protected def supportsNotMatchedBySourceClauses: Boolean = true
-
-  override def convertToGpu(): RunnableCommand = {
-    new GpuMergeIntoCommand42x(mergeCmd, conf)
-  }
-}
+  extends RunnableCommandMeta[DeltaReorgTableCommand](cmd, conf, parent, rule)

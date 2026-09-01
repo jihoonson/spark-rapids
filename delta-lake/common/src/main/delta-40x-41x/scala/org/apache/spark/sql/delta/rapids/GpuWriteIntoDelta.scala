@@ -28,7 +28,8 @@ import org.apache.spark.sql.delta.commands.WriteIntoDelta
 case class GpuWriteIntoDelta(
     override val gpuDeltaLog: GpuDeltaLog,
     override val cpuWrite: WriteIntoDelta)
-    extends GpuWriteIntoDeltaBase(gpuDeltaLog, cpuWrite) {
+    extends GpuWriteIntoDeltaBase(gpuDeltaLog, cpuWrite)
+      with GpuWriteIntoDeltaLike {
 
   override protected def buildCommitMetadata: DeltaOperations.Operation = {
     DeltaRuntimeShim.buildWriteOperation(

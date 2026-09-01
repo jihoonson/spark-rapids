@@ -47,7 +47,7 @@ class DeltaReorgTableCommandMeta(
     conf: RapidsConf,
     parent: Option[RapidsMeta[_, _, _]],
     rule: DataFromReplacementRule)
-  extends RunnableCommandMeta[DeltaReorgTableCommand](cmd, conf, parent, rule) {
+  extends DeltaReorgTableCommandMetaBase(cmd, conf, parent, rule) {
 
   private object DeltaCmdProxy extends DeltaCommand
 
