@@ -32,7 +32,6 @@ import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProto
 import org.apache.spark.sql.delta.commands.TableCreationModes
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTableUtils
 import org.apache.spark.sql.delta.rapids.{GpuCreateDeltaTableCommand40x42xBase, GpuDeltaLog, GpuOptimisticTransactionBase}
-import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 
 case class GpuCreateDeltaTableCommand(
     table: CatalogTable,

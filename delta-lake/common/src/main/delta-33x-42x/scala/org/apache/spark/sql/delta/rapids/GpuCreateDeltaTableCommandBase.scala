@@ -36,7 +36,7 @@ import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaColumnMapping.{dropColumnMappingMetadata, filterColumnMappingProperties}
 import org.apache.spark.sql.delta.actions.{Action, DomainMetadata, Metadata, Protocol}
-import org.apache.spark.sql.delta.commands.{CloneTableCommand, TableCreationModes, WriteIntoDelta}
+import org.apache.spark.sql.delta.commands.{CloneTableCommand, TableCreationModes, WriteIntoDelta, WriteIntoDeltaLike}
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.hooks.{HudiConverterHook, IcebergConverterHook, UpdateCatalog, UpdateCatalogFactory}

@@ -96,7 +96,8 @@ abstract class GpuDeltaCatalogBase(
       operation: TableCreationModes.CreationMode): Option[CatalogTable]
 
   /**
-   * Determines whether table metadata should be created through the Delta catalog or Spark's session catalog.
+   * Determines whether table metadata should be created through the Delta catalog or
+   * Spark's session catalog.
    *
    * @param sourceQuery the data produced by a CTAS or RTAS query, or `None` when the table
    *                    creation or replacement has no `AS SELECT` clause
