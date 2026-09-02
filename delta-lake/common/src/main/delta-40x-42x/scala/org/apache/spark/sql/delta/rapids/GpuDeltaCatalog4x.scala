@@ -23,7 +23,6 @@ import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.TableCreationModes
-import org.apache.spark.sql.execution.command.RunnableCommand
 
 /**
  * Shared GPU Delta catalog base for the Delta 4.x shims.
@@ -41,7 +40,7 @@ abstract class GpuDeltaCatalog4x(
       withDb: CatalogTable,
       existingTableOpt: Option[CatalogTable],
       mode: SaveMode,
-      writer: Option[RunnableCommand],
+      writer: Option[GpuWriteIntoDeltaLike],
       operation: TableCreationModes.CreationMode,
       isByPath: Boolean,
       tableCreateFunc: Option[CatalogTable => Unit]): GpuCreateDeltaTableCommand40x42xBase
@@ -58,7 +57,7 @@ abstract class GpuDeltaCatalog4x(
       withDb,
       existingTableOpt,
       mode,
-      writer.map(_.asInstanceOf[RunnableCommand]),
+      writer,
       operation,
       isByPath,
       tableCreateFunc).run(spark)

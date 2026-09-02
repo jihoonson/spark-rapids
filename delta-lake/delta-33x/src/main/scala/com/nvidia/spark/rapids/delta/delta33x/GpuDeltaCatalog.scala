@@ -32,7 +32,6 @@ import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.TableCreationModes
 import org.apache.spark.sql.delta.rapids.GpuWriteIntoDeltaLike
 import org.apache.spark.sql.delta.rapids.delta33x.GpuCreateDeltaTableCommand
-import org.apache.spark.sql.execution.command.RunnableCommand
 
 class GpuDeltaCatalog(
     cpuCatalog: DeltaCatalog,
@@ -58,7 +57,7 @@ class GpuDeltaCatalog(
       withDb,
       existingTableOpt,
       operation.mode,
-      writer.map(_.asInstanceOf[RunnableCommand]),
+      writer,
       operation,
       tableByPath = isByPath,
       createTableFunc = tableCreateFunc)(rapidsConf).run(spark)

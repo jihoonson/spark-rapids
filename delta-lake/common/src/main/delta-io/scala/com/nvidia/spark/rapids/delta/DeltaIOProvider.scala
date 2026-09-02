@@ -33,7 +33,6 @@ import org.apache.spark.sql.delta.catalog.{DeltaCatalog, DeltaTableV2}
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.rapids.{DeltaRuntimeShim, GpuDeltaLog}
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
-import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.{FileFormat, LogicalRelation}
 import org.apache.spark.sql.execution.datasources.v2.{AppendDataExecV1, AtomicCreateTableAsSelectExec, AtomicReplaceTableAsSelectExec, OverwriteByExpressionExecV1}
 import org.apache.spark.sql.internal.SQLConf
@@ -253,7 +252,7 @@ abstract class DeltaIOProvider extends DeltaProviderImplBase {
             data)
           val gpuWrite = DeltaRuntimeShim.createGpuWrite(
             new GpuDeltaLog(deltaLog, rapidsConf), cpuWrite)
-          gpuWrite.asInstanceOf[LeafRunnableCommand].run(session)
+          gpuWrite.run(session)
 
           // TODO: Push this to Apache Spark
           // Re-cache all cached plans(including this relation itself, if it's cached) that refer

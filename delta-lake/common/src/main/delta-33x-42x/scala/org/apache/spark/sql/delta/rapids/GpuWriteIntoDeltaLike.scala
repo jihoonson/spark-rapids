@@ -17,11 +17,13 @@
 package org.apache.spark.sql.delta.rapids
 
 import org.apache.spark.sql.delta.commands.WriteIntoDeltaLike
+import org.apache.spark.sql.execution.command.LeafRunnableCommand
 
 /**
  * GPU counterpart of WriteIntoDeltaLike.
  */
-trait GpuWriteIntoDeltaLike extends WriteIntoDeltaLike with GpuDeltaCommandLike {
+trait GpuWriteIntoDeltaLike
+  extends LeafRunnableCommand with WriteIntoDeltaLike with GpuDeltaCommandLike {
   override def withNewWriterConfiguration(
       updatedConfiguration: Map[String, String]): GpuWriteIntoDeltaLike
 }

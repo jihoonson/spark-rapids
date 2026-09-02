@@ -16,7 +16,9 @@
 
 package org.apache.spark.sql.delta.rapids
 
+import org.apache.spark.sql.execution.command.LeafRunnableCommand
+
 /**
  * GPU counterpart of WriteIntoDeltaLike.
  */
-trait GpuWriteIntoDeltaLike
+trait GpuWriteIntoDeltaLike extends LeafRunnableCommand

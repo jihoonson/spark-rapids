@@ -29,9 +29,11 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.TableCreationModes
-import org.apache.spark.sql.delta.rapids.{GpuCreateDeltaTableCommand40x42xBase, GpuDeltaCatalog4x}
+import org.apache.spark.sql.delta.rapids.{
+  GpuCreateDeltaTableCommand40x42xBase,
+  GpuDeltaCatalog4x,
+  GpuWriteIntoDeltaLike}
 import org.apache.spark.sql.delta.rapids.delta42x.GpuCreateDeltaTableCommand
-import org.apache.spark.sql.execution.command.RunnableCommand
 
 class GpuDeltaCatalog(
     cpuCatalog: DeltaCatalog,
@@ -68,7 +70,7 @@ class GpuDeltaCatalog(
       withDb: CatalogTable,
       existingTableOpt: Option[CatalogTable],
       mode: SaveMode,
-      writer: Option[RunnableCommand],
+      writer: Option[GpuWriteIntoDeltaLike],
       operation: TableCreationModes.CreationMode,
       isByPath: Boolean,
       tableCreateFunc: Option[CatalogTable => Unit]): GpuCreateDeltaTableCommand40x42xBase = {
