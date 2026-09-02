@@ -49,16 +49,17 @@ import org.apache.spark.sql.types.StructType
 
 /**
  * Shared implementation of the GPU WriteIntoDeltaLike contract for Delta 4.0 through 4.2.
- *
- * The self-type deliberately keeps the version-specific GpuWriteIntoDeltaLike contract off this
- * base class's JVM interface list. Delta 4.1 and 4.2 adapters share this base class name in the
- * aggregate JAR, while their WriteIntoDeltaLike interfaces are not binary compatible.
  */
 abstract class GpuWriteIntoDeltaBase(
     val gpuDeltaLog: GpuDeltaLog,
     val cpuWrite: WriteIntoDelta)
     extends LeafRunnableCommand
-      with ImplicitMetadataOperation { self: GpuWriteIntoDeltaLike =>
+      with ImplicitMetadataOperation {
+  
+  // The self-type deliberately keeps the version-specific GpuWriteIntoDeltaLike contract off this
+  // base class's JVM interface list. Delta 4.1 and 4.2 adapters share this base class name in the
+  // aggregate JAR, while their WriteIntoDeltaLike interfaces are not binary compatible.
+  self: GpuWriteIntoDeltaLike =>
 
   override protected val canMergeSchema: Boolean = cpuWrite.options.canMergeSchema
 

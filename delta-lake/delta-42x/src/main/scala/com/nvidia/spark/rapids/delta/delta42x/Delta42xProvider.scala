@@ -41,7 +41,7 @@ import org.apache.spark.sql.execution.datasources.v2.{AppendDataExecV1, AtomicCr
 
 object Delta42xProvider extends DeltaProviderBase with Logging {
 
-  private def tagCatalogManagedTable(
+  private def tagIfCatalogManagedTableProperty(
       meta: RapidsMeta[_, _, _],
       properties: Map[String, String],
       spark: SparkSession): Unit = {
@@ -53,7 +53,7 @@ object Delta42xProvider extends DeltaProviderBase with Logging {
     }
   }
 
-  private def tagExistingCatalogManagedTable(
+  private def tagIfTargetTableUnsupported(
       meta: RapidsMeta[_, _, _],
       cpuExec: AtomicReplaceTableAsSelectExec): Unit = {
     if (cpuExec.catalog.tableExists(cpuExec.ident)) {
@@ -80,15 +80,15 @@ object Delta42xProvider extends DeltaProviderBase with Logging {
       cpuExec: AtomicCreateTableAsSelectExec,
       meta: AtomicCreateTableAsSelectExecMeta): Unit = {
     super.tagForGpu(cpuExec, meta)
-    tagCatalogManagedTable(meta, cpuExec.properties, cpuExec.session)
+    tagIfCatalogManagedTableProperty(meta, cpuExec.properties, cpuExec.session)
   }
 
   override def tagForGpu(
       cpuExec: AtomicReplaceTableAsSelectExec,
       meta: AtomicReplaceTableAsSelectExecMeta): Unit = {
     super.tagForGpu(cpuExec, meta)
-    tagCatalogManagedTable(meta, cpuExec.properties, cpuExec.session)
-    tagExistingCatalogManagedTable(meta, cpuExec)
+    tagIfCatalogManagedTableProperty(meta, cpuExec.properties, cpuExec.session)
+    tagIfTargetTableUnsupported(meta, cpuExec)
   }
 
   override def tagForGpu(

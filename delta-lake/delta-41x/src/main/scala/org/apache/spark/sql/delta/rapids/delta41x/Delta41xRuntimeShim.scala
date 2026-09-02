@@ -71,8 +71,8 @@ class Delta41xRuntimeShim extends DeltaRuntimeShimBase {
       options.replaceWhere,
       options.userMetadata,
       dynamicPartitionOverwriteOption(options),
-      booleanOption(options.canOverwriteSchema),
-      booleanOption(options.canMergeSchema))
+      toBooleanOption(options.canOverwriteSchema),
+      toBooleanOption(options.canMergeSchema))
   }
 
   override def buildReplaceTableOperation(
@@ -92,15 +92,15 @@ class Delta41xRuntimeShim extends DeltaRuntimeShimBase {
       clusterBy,
       options.flatMap(_.replaceWhere),
       options.flatMap(dynamicPartitionOverwriteOption),
-      booleanOption(options.exists(_.canOverwriteSchema)),
-      booleanOption(options.exists(_.canMergeSchema)))
+      toBooleanOption(options.exists(_.canOverwriteSchema)),
+      toBooleanOption(options.exists(_.canMergeSchema)))
   }
 
   private def dynamicPartitionOverwriteOption(options: DeltaOptions): Option[Boolean] = {
-    booleanOption(Try(options.isDynamicPartitionOverwriteMode).getOrElse(false))
+    toBooleanOption(Try(options.isDynamicPartitionOverwriteMode).getOrElse(false))
   }
 
-  private def booleanOption(enabled: Boolean): Option[Boolean] = {
+  private def toBooleanOption(enabled: Boolean): Option[Boolean] = {
     if (enabled) Some(true) else None
   }
 }

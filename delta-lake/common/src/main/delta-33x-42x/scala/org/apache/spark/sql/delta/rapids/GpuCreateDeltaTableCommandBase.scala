@@ -118,17 +118,58 @@ abstract class GpuCreateDeltaTableCommandBase(
     enforceDependenciesInConfiguration(sparkSession, configuration, snapshot)
   }
 
+  /**
+   * Validates that this command is allowed to create a catalog-managed table.
+   *
+   * A table is considered catalog-managed when its properties enable `CatalogOwnedTableFeature`
+   * or the session enables catalog-managed tables by default. This method throws the
+   * `DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_CREATION` error if the command is not allowed.
+   *
+   * @param sparkSession the session used to read the default catalog-managed-table setting
+   */
   protected def validateCatalogManagedTable(sparkSession: SparkSession): Unit = {}
 
+  /**
+   * Validates catalog-managed table properties supplied by a create or replace operation against
+   * the current state of the target table.
+   *
+   * Properties are rejected when they are reserved for internal catalog use or when they would
+   * make an existing table catalog-managed through an unsupported transition. When a property is
+   * rejected, Delta's property validation throws an error describing the invalid property or
+   * transition.
+   *
+   * @param sparkSession the session for the table operation
+   * @param gpuDeltaLog the target table log whose existence and current state are used for
+   *                    validation
+   * @param tableWithLocation the catalog table containing the resolved location and properties
+   */
   protected def validateCatalogManagedTableProperties(
       sparkSession: SparkSession,
       gpuDeltaLog: GpuDeltaLog,
       tableWithLocation: CatalogTable): Unit = {}
 
+  /**
+   * Adjusts the metadata that will replace an existing table's metadata.
+   *
+   * Version-specific implementations can copy metadata that must be preserved from the current
+   * table into the proposed replacement metadata.
+   *
+   * @param txn the transaction whose snapshot contains the current table metadata
+   * @param metadata the proposed replacement metadata
+   * @return the metadata to write for the replacement
+   */
   protected def metadataForReplace(
       txn: GpuOptimisticTransactionBase,
       metadata: Metadata): Metadata = metadata
 
+  /**
+   * Returns the catalog table to associate with the transaction for this create or replace
+   * operation. The returned value is passed to `GpuDeltaLog.startTransaction` for catalog-aware
+   * transaction handling.
+   *
+   * @return `Some` containing the existing catalog table when it should be associated with the
+   *         transaction, or `None` when no catalog table should be supplied
+   */
   protected def catalogTableForTransaction: Option[CatalogTable] = None
 
   protected def createCatalogTableForCreateOrReplace(
@@ -240,7 +281,7 @@ abstract class GpuCreateDeltaTableCommandBase(
         case Some(deltaWriter: WriteIntoDeltaLike) =>
           checkPathEmpty(txn)
           handleCreateTableAsSelect(sparkSession, txn, gpuDeltaLog,
-            deltaWriter, tableWithLocation)
+            deltaWriter.asInstanceOf[GpuWriteIntoDeltaLike], tableWithLocation)
           Nil
         case Some(query) =>
           checkPathEmpty(txn)
@@ -319,7 +360,7 @@ abstract class GpuCreateDeltaTableCommandBase(
      sparkSession: SparkSession,
      txn: GpuOptimisticTransactionBase,
      gpuDeltaLog: GpuDeltaLog,
-     deltaWriter: WriteIntoDeltaLike,
+     deltaWriter: GpuWriteIntoDeltaLike,
      tableWithLocation: CatalogTable): Unit = {
     val isManagedTable = tableWithLocation.tableType == CatalogTableType.MANAGED
     val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)

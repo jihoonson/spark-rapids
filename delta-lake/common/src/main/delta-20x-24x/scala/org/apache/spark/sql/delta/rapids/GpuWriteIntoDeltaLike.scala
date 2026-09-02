@@ -16,5 +16,7 @@
 
 package org.apache.spark.sql.delta.rapids
 
-/** Common type for GPU counterparts of Delta 2.x WriteIntoDelta commands. */
+/**
+ * GPU counterpart of WriteIntoDeltaLike.
+ */
 trait GpuWriteIntoDeltaLike

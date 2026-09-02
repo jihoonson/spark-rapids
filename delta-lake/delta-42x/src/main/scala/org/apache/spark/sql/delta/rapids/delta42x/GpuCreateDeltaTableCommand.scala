@@ -68,7 +68,7 @@ case class GpuCreateDeltaTableCommand(
   override protected def validateCatalogManagedTable(sparkSession: SparkSession): Unit = {
     val tableFeatures =
       TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(table.properties)
-    if (!DeltaUtils.isTesting && !allowCatalogManaged &&
+    if (!allowCatalogManaged &&
         (tableFeatures.contains(CatalogOwnedTableFeature) ||
           CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(sparkSession))) {
       throw DeltaErrors.deltaCannotCreateCatalogManagedTable()

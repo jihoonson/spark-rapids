@@ -70,15 +70,38 @@ abstract class GpuDeltaCatalogBase(
       isByPath: Boolean,
       tableCreateFunc: Option[CatalogTable => Unit]): Unit
 
+  /**
+   * Converts a V2 catalog identifier to a V1 table identifier.
+   *
+   * @param ident the V2 identifier containing the table name and namespace
+   * @return a V1 identifier whose table name is `ident.name()` and whose optional database is the
+   *         last element of `ident.namespace()`
+   */
   protected def getTableIdentifier(ident: Identifier): TableIdentifier = {
     TableIdentifier(ident.name(), ident.namespace().lastOption)
   }
 
+  /**
+   * Finds the catalog metadata for a table that may already exist.
+   *
+   * @param table the V1 table identifier derived from `ident`
+   * @param ident the original V2 identifier
+   * @param operation the requested creation mode
+   * @return the existing table metadata when an applicable catalog lookup finds the table, or
+   *         `None` otherwise
+   */
   protected def getExistingTableIfExists(
       table: TableIdentifier,
       ident: Identifier,
       operation: TableCreationModes.CreationMode): Option[CatalogTable]
 
+  /**
+   * Determines whether table metadata should be created through the Delta catalog or Spark's session catalog.
+   *
+   * @param sourceQuery the data produced by a CTAS or RTAS query, or `None` when the table
+   *                    creation or replacement has no `AS SELECT` clause
+   * @return `true` to create the table metadata through the Delta catalog, `false` otherwise.
+   */
   protected def useCatalogCreateTable(sourceQuery: Option[DataFrame]): Boolean = {
     isUnityCatalog && sourceQuery.isEmpty
   }

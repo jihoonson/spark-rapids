@@ -18,7 +18,9 @@ package org.apache.spark.sql.delta.rapids
 
 import org.apache.spark.sql.delta.commands.WriteIntoDeltaLike
 
-/** Common type for GPU counterparts of Delta's WriteIntoDeltaLike. */
+/**
+ * GPU counterpart of WriteIntoDeltaLike.
+ */
 trait GpuWriteIntoDeltaLike extends WriteIntoDeltaLike with GpuDeltaCommandLike {
   override def withNewWriterConfiguration(
       updatedConfiguration: Map[String, String]): GpuWriteIntoDeltaLike

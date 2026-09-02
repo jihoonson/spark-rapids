@@ -23,12 +23,12 @@ import org.apache.spark.sql.delta.OptimisticTransaction;
 import org.apache.spark.sql.delta.commands.DeltaCommand;
 
 /**
- * Stable DeltaCommand parent for GPU Delta commands.
+ * Common interface for GPU Delta commands.
  *
- * Delta 4.2 adds {@code createTableRelation} to {@code DeltaCommand}. Defining that method on a
- * Java interface keeps the inherited method set stable when shared Scala commands are compiled
- * against Delta 4.0, 4.1, and 4.2. Java permits the same declaration whether or not the parent
- * interface already declares it, unlike Scala's version-dependent {@code override} requirement.
+ * DeltaCommand defines {@code createTableRelation} starting in Delta 4.2, but it does not define
+ * that method in earlier supported versions. Declaring the method as a Java default method lets
+ * this shared interface compile against all supported versions: it introduces the method for
+ * older versions and overrides it for Delta 4.2.
  */
 public interface GpuDeltaCommandLike extends DeltaCommand {
   default LogicalPlan createTableRelation(

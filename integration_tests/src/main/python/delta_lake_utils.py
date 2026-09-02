@@ -73,7 +73,7 @@ def _loaded_delta_lake_version():
         return None
 
 
-def is_delta_lake_42():
+def is_oss_delta_lake_42():
     return not is_databricks_runtime() and _loaded_delta_lake_version() == "4.2.0"
 
 

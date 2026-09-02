@@ -217,7 +217,7 @@ def test_delta_merge_not_matched_by_source_fallback(spark_tmp_path, spark_tmp_ta
 @delta_lake
 @ignore_order
 @pytest.mark.skipif(not supports_delta_lake_merge_not_matched_by_source_gpu(),
-                    reason="NOT MATCHED BY SOURCE requires the Delta 4.1+ GPU implementation")
+                    reason="NOT MATCHED BY SOURCE is supported on the GPU with OSS Delta 4.1+")
 @pytest.mark.parametrize("use_cdf", [False, True], ids=idfn)
 def test_delta_merge_not_matched_by_source(spark_tmp_path, spark_tmp_table_factory, use_cdf):
     def src_table_func(spark):

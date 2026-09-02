@@ -1769,9 +1769,9 @@ def test_delta_write_partial_overwrite_replace_where(spark_tmp_path):
 @allow_non_gpu(*delta_meta_allow, delta_write_fallback_allow)
 @delta_lake
 @ignore_order
-@pytest.mark.skipif(not is_delta_lake_42(), reason="Delta 4.2 write option")
+@pytest.mark.skipif(not is_oss_delta_lake_42(), reason="Delta 4.2 write option")
 @pytest.mark.parametrize("option_name", ["replaceOn", "replaceUsing"])
-def test_delta_42_replace_on_or_using_fallback(spark_tmp_path, option_name):
+def test_delta_replace_on_or_using_fallback(spark_tmp_path, option_name):
     data_path = spark_tmp_path + "/DELTA_DATA"
 
     def setup_tables(spark):
@@ -1790,8 +1790,8 @@ def test_delta_42_replace_on_or_using_fallback(spark_tmp_path, option_name):
 @allow_non_gpu(*delta_meta_allow, delta_write_fallback_allow)
 @delta_lake
 @ignore_order
-@pytest.mark.skipif(not is_delta_lake_42(), reason="Delta 4.2 write option")
-def test_delta_42_target_alias_fallback(spark_tmp_path):
+@pytest.mark.skipif(not is_oss_delta_lake_42(), reason="Delta 4.2 write option")
+def test_delta_target_alias_fallback(spark_tmp_path):
     data_path = spark_tmp_path + "/DELTA_DATA"
 
     def setup_tables(spark):
@@ -1814,7 +1814,7 @@ def test_delta_42_target_alias_fallback(spark_tmp_path):
 @allow_non_gpu(*delta_meta_allow, delta_write_fallback_allow)
 @delta_lake
 @ignore_order
-@pytest.mark.skipif(not is_delta_lake_42(), reason="Delta 4.2 write option")
+@pytest.mark.skipif(not is_oss_delta_lake_42(), reason="Delta 4.2 write option")
 def test_delta_42_null_intolerant_dpo_fallback(spark_tmp_path):
     data_path = spark_tmp_path + "/DELTA_DATA"
 
