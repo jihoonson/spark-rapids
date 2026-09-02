@@ -27,7 +27,7 @@ import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference,
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
 import org.apache.spark.sql.delta.{DeltaErrors, IcebergCompat, RowTracking, Snapshot,
   UniversalFormat}
-import org.apache.spark.sql.delta.commands.{DeltaCommand, DeltaOptimizeContext}
+import org.apache.spark.sql.delta.commands.DeltaOptimizeContext
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.rapids.commands.GpuOptimizeExecutor
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
@@ -63,7 +63,7 @@ case class GpuOptimizeTableCommand(
     userPartitionPredicates: Seq[String],
     optimizeContext: DeltaOptimizeContext
   )(val zOrderBy: Seq[UnresolvedAttribute])
-  extends RunnableCommand with DeltaCommand with UnaryNode {
+  extends RunnableCommand with GpuDeltaCommandLike with UnaryNode {
 
   override val otherCopyArgs: Seq[AnyRef] = zOrderBy :: Nil
 

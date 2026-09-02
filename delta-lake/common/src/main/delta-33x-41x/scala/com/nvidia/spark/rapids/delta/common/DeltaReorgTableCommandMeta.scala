@@ -23,9 +23,8 @@ import com.nvidia.spark.rapids.delta.RapidsDeltaUtils
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.delta.{IcebergCompat, RowTracking, UniversalFormat}
-import org.apache.spark.sql.delta.commands.{DeltaCommand, DeltaReorgTableCommand,
-  DeltaReorgTableMode}
-import org.apache.spark.sql.delta.rapids.GpuDeltaReorgTableCommand
+import org.apache.spark.sql.delta.commands.{DeltaReorgTableCommand, DeltaReorgTableMode}
+import org.apache.spark.sql.delta.rapids.{GpuDeltaCommandLike, GpuDeltaReorgTableCommand}
 import org.apache.spark.sql.execution.command.RunnableCommand
 
 object DeltaReorgTableCommandMeta {
@@ -49,7 +48,7 @@ class DeltaReorgTableCommandMeta(
     rule: DataFromReplacementRule)
   extends DeltaReorgTableCommandMetaBase(cmd, conf, parent, rule) {
 
-  private object DeltaCmdProxy extends DeltaCommand
+  private object DeltaCmdProxy extends GpuDeltaCommandLike
 
   override def tagSelfForGpu(): Unit = {
     if (!conf.isDeltaWriteEnabled) {

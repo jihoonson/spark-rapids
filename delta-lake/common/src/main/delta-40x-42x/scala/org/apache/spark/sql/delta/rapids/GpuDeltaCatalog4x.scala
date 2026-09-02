@@ -44,7 +44,7 @@ abstract class GpuDeltaCatalog4x(
       writer: Option[RunnableCommand],
       operation: TableCreationModes.CreationMode,
       isByPath: Boolean,
-      tableCreateFunc: Option[CatalogTable => Unit]): GpuCreateDeltaTableCommand40x41xBase
+      tableCreateFunc: Option[CatalogTable => Unit]): GpuCreateDeltaTableCommand40x42xBase
 
   override protected def createGpuCreateDeltaTableCommand(
       withDb: CatalogTable,

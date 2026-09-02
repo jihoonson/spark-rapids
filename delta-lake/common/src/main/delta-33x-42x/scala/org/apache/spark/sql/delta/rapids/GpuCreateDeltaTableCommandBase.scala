@@ -36,7 +36,7 @@ import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaColumnMapping.{dropColumnMappingMetadata, filterColumnMappingProperties}
 import org.apache.spark.sql.delta.actions.{Action, DomainMetadata, Metadata, Protocol}
-import org.apache.spark.sql.delta.commands.{CloneTableCommand, DeltaCommand, TableCreationModes, WriteIntoDelta, WriteIntoDeltaLike}
+import org.apache.spark.sql.delta.commands.{CloneTableCommand, TableCreationModes, WriteIntoDelta, WriteIntoDeltaLike}
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.hooks.{HudiConverterHook, IcebergConverterHook, UpdateCatalog, UpdateCatalogFactory}
@@ -77,7 +77,7 @@ abstract class GpuCreateDeltaTableCommandBase(
     createTableFunc: Option[CatalogTable => Unit],
     rapidsConf: RapidsConf)
   extends LeafRunnableCommand
-    with DeltaCommand
+    with GpuDeltaCommandLike
     with DeltaLogging {
   override def otherCopyArgs: Seq[AnyRef] = Seq(rapidsConf)
 
@@ -104,7 +104,7 @@ abstract class GpuCreateDeltaTableCommandBase(
 
   // Abstract methods for version-specific behavior
   protected def createDataFrameFromQuery(sparkSession: SparkSession, query: LogicalPlan): DataFrame
-  
+
   protected def enforceDependenciesInConfiguration(
       sparkSession: SparkSession,
       configuration: Map[String, String],

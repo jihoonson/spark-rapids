@@ -62,7 +62,7 @@ case class GpuDeltaDynamicPartitionOverwriteCommand(
 
     val operationSession = shims.toOperationSparkSession(
       sparkSession.asInstanceOf[shims.ShimSparkSession])
-    
+
     DeltaRuntimeShim.createGpuWrite(
       gpuDeltaLog,
       WriteIntoDelta(

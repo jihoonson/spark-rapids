@@ -20,6 +20,7 @@ import com.nvidia.spark.rapids.{DataFromReplacementRule, RapidsConf, RapidsMeta}
 import com.nvidia.spark.rapids.delta.common.MergeIntoCommandMetaBase
 
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
+import org.apache.spark.sql.delta.rapids.GpuDeltaLog
 import org.apache.spark.sql.delta.rapids.delta42x.GpuMergeIntoCommand42x
 import org.apache.spark.sql.execution.command.RunnableCommand
 
@@ -33,6 +34,18 @@ class MergeIntoCommandMeta(
   override protected def supportsNotMatchedBySourceClauses: Boolean = true
 
   override def convertToGpu(): RunnableCommand = {
-    new GpuMergeIntoCommand42x(mergeCmd, conf)
+    GpuMergeIntoCommand42x(
+      mergeCmd.source,
+      mergeCmd.target,
+      mergeCmd.catalogTable,
+      mergeCmd.targetFileIndex,
+      new GpuDeltaLog(mergeCmd.targetFileIndex.deltaLog, conf),
+      mergeCmd.condition,
+      mergeCmd.matchedClauses,
+      mergeCmd.notMatchedClauses,
+      mergeCmd.notMatchedBySourceClauses,
+      mergeCmd.migratedSchema,
+      mergeCmd.trackHighWaterMarks,
+      mergeCmd.schemaEvolutionEnabled)(conf)
   }
 }

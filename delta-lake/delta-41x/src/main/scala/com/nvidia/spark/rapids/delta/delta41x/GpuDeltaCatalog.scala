@@ -29,9 +29,9 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.TableCreationModes
-import org.apache.spark.sql.delta.rapids.{GpuCreateDeltaTableCommand40x41xBase, GpuDeltaCatalog4x}
-import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.delta.rapids.{GpuCreateDeltaTableCommand40x42xBase, GpuDeltaCatalog4x}
 import org.apache.spark.sql.delta.rapids.delta41x.GpuCreateDeltaTableCommand
+import org.apache.spark.sql.execution.command.RunnableCommand
 
 class GpuDeltaCatalog(
     cpuCatalog: DeltaCatalog,
@@ -57,7 +57,7 @@ class GpuDeltaCatalog(
       writer: Option[RunnableCommand],
       operation: TableCreationModes.CreationMode,
       isByPath: Boolean,
-      tableCreateFunc: Option[CatalogTable => Unit]): GpuCreateDeltaTableCommand40x41xBase = {
+      tableCreateFunc: Option[CatalogTable => Unit]): GpuCreateDeltaTableCommand40x42xBase = {
     GpuCreateDeltaTableCommand(
       withDb,
       existingTableOpt,

@@ -31,7 +31,7 @@ import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, DeltaErrors, Snapsh
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.commands.TableCreationModes
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTableUtils
-import org.apache.spark.sql.delta.rapids.{GpuCreateDeltaTableCommand40x41xBase, GpuDeltaLog, GpuOptimisticTransactionBase}
+import org.apache.spark.sql.delta.rapids.{GpuCreateDeltaTableCommand40x42xBase, GpuDeltaLog, GpuOptimisticTransactionBase}
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 
 case class GpuCreateDeltaTableCommand(
@@ -45,7 +45,7 @@ case class GpuCreateDeltaTableCommand(
     protocol: Option[Protocol] = None,
     allowCatalogManaged: Boolean = false,
     createTableFunc: Option[CatalogTable => Unit] = None)(@transient rapidsConf: RapidsConf)
-  extends GpuCreateDeltaTableCommand40x41xBase(
+  extends GpuCreateDeltaTableCommand40x42xBase(
     table, existingTableOpt, mode, query, operation, tableByPath, output, protocol,
     createTableFunc, rapidsConf) {
 

@@ -34,7 +34,7 @@ import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, DeltaTableUtils, DeltaUDF, NumRecordsStats, RowTracking}
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
-import org.apache.spark.sql.delta.commands.{DeletionVectorUtils, DeltaCommand, TouchedFileWithDV, UpdateCommand, UpdateMetric}
+import org.apache.spark.sql.delta.commands.{DeletionVectorUtils, TouchedFileWithDV, UpdateCommand, UpdateMetric}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
@@ -55,7 +55,7 @@ abstract class GpuUpdateCommandBase(
     updateExpressions: Seq[Expression],
     condition: Option[Expression])
     extends LeafRunnableCommand
-    with DeltaCommand
+    with GpuDeltaCommandLike
     with DeltaCommandShims {
 
   override val output: Seq[Attribute] = {

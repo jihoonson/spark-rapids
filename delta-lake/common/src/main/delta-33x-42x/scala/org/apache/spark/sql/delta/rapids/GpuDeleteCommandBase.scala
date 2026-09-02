@@ -32,7 +32,7 @@ import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaOperations, DeltaTableUtils, DeltaUDF, NumRecordsStats, OptimisticTransaction, RowTracking}
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, FileAction}
-import org.apache.spark.sql.delta.commands.{DeleteCommandMetrics, DeleteMetric, DeletionVectorUtils, DeltaCommand}
+import org.apache.spark.sql.delta.commands.{DeleteCommandMetrics, DeleteMetric, DeletionVectorUtils}
 import org.apache.spark.sql.delta.commands.DeleteCommand.{rewritingFilesMsg, FINDING_TOUCHED_FILES_MSG}
 import org.apache.spark.sql.delta.commands.MergeIntoCommandBase.totalBytesAndDistinctPartitionValues
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
@@ -60,7 +60,7 @@ abstract class GpuDeleteCommandBase(
     target: LogicalPlan,
     condition: Option[Expression])
     extends LeafRunnableCommand
-    with DeltaCommand
+    with GpuDeltaCommandLike
     with DeleteCommandMetrics
     with DeltaCommandShims {
 

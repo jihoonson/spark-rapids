@@ -16,13 +16,24 @@
 
 package org.apache.spark.sql.delta.rapids
 
-import org.apache.spark.internal.{Logging, LogKey, MDC}
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, SubqueryAlias}
+import org.apache.spark.sql.delta.OptimisticTransaction
+import org.apache.spark.sql.execution.datasources.LogicalRelation
 
-object DeltaMdcShims {
-  private object LoggingBridge extends Logging {
-    def createMdc(logKey: LogKey, value: Any): MDC = MDC(logKey, value)
+object GpuDeltaCommandUtils {
+  def createTableRelation(
+      txn: OptimisticTransaction,
+      tableAliasOpt: Option[String]): LogicalPlan = {
+    val relation = txn.deltaLog.createRelation(
+      Seq.empty,
+      Some(txn.snapshot),
+      txn.catalogTable,
+      false)
+    val logicalRelation = LogicalRelation(relation)
+    if (tableAliasOpt.isDefined) {
+      SubqueryAlias(tableAliasOpt.get, logicalRelation)
+    } else {
+      logicalRelation
+    }
   }
-
-  def mdc(logKey: AnyRef, value: Any): MDC =
-    LoggingBridge.createMdc(logKey.asInstanceOf[LogKey], value)
 }

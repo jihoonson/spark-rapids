@@ -36,12 +36,12 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.actions.InMemoryLogReplay.UniqueFileActionTuple
-import org.apache.spark.sql.delta.commands.{Batch, Bin, ClusteringStrategy, DeletionVectorUtils, DeltaCommand, DeltaOptimizeContext, OptimizeTableStrategy, ZOrderStrategy}
+import org.apache.spark.sql.delta.commands.{Batch, Bin, ClusteringStrategy, DeletionVectorUtils, DeltaOptimizeContext, OptimizeTableStrategy, ZOrderStrategy}
 import org.apache.spark.sql.delta.commands.optimize._
 import org.apache.spark.sql.delta.files.SQLMetricsReporting
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
-import org.apache.spark.sql.delta.rapids.{GpuDeltaLog, GpuOptimisticTransactionBase,
-  GpuOptimizeTableCommand}
+import org.apache.spark.sql.delta.rapids.{GpuDeltaCommandLike, GpuDeltaLog,
+  GpuOptimisticTransactionBase, GpuOptimizeTableCommand}
 import org.apache.spark.sql.delta.rapids.DeltaMdcShims.mdc
 import org.apache.spark.sql.delta.skipping.MultiDimClustering
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
@@ -67,7 +67,7 @@ class GpuOptimizeExecutor(
     zOrderByColumns: Seq[String],
     isAutoCompact: Boolean,
     optimizeContext: DeltaOptimizeContext)
-  extends DeltaCommand with SQLMetricsReporting with Serializable {
+  extends GpuDeltaCommandLike with SQLMetricsReporting with Serializable {
   private def ensureDeletionVectorDisabled(): Unit = {
     val dvFeatureEnabled = DeletionVectorUtils.deletionVectorsWritable(snapshot)
 

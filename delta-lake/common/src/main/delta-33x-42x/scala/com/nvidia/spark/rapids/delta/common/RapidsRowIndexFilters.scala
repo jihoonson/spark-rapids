@@ -127,4 +127,3 @@ trait RapidsRowIndexMarkingFiltersBuilder {
     }
   }
 }
-

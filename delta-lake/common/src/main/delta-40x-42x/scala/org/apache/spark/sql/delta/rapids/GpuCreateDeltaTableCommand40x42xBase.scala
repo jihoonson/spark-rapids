@@ -34,7 +34,7 @@ import org.apache.spark.sql.rapids.shims.TrampolineConnectShims
 /**
  * Shared Delta 4.0/4.1 scaffolding for versioned GpuCreateDeltaTableCommand implementations.
  */
-abstract class GpuCreateDeltaTableCommand40x41xBase(
+abstract class GpuCreateDeltaTableCommand40x42xBase(
     table: CatalogTable,
     existingTableOpt: Option[CatalogTable],
     mode: SaveMode,

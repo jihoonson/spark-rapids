@@ -16,13 +16,17 @@
 
 package org.apache.spark.sql.delta.rapids
 
-import org.apache.spark.sql.delta.commands.DeltaCommand
+import org.apache.spark.internal.{Logging, LogKey, MDC}
 
-/**
- * Stable DeltaCommand parent for GPU Delta commands.
- *
- * Delta 4.2 adds DeltaCommand as a parent of WriteIntoDeltaLike. Keeping DeltaCommand behind this
- * plugin-owned type prevents that upstream inheritance change from altering the JVM parents of
- * shared GPU command interfaces.
- */
-trait GpuDeltaCommandLike extends DeltaCommand
+object DeltaMdcShims {
+  // Spark 4.0 constructs MDC entries through the MDC companion object, while Spark 4.1 exposes
+  // MDC(LogKey, value) as a method on Logging and no longer provides that companion object.
+  // Defining the call inside a Logging implementation lets this shared source compile against
+  // both Spark lines.
+  private object LoggingBridge extends Logging {
+    def createMdc(logKey: LogKey, value: Any): MDC = MDC(logKey, value)
+  }
+
+  def mdc(logKey: AnyRef, value: Any): MDC =
+    LoggingBridge.createMdc(logKey.asInstanceOf[LogKey], value)
+}

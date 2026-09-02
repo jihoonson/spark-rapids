@@ -1750,6 +1750,7 @@ This will force full Scala code rebuild in downstream modules.
                             <arg>-Wconf:cat=unused-privates:e</arg>
                             <arg>-Wunused:imports,locals,patvars,privates</arg>
                             <!-- #endif scala-2.13 -->
+                            <arg>-Wconf:any:s</arg>
                         </args>
                         <addJavacArgs>${scala.javac.args}</addJavacArgs>
                         <!-- #if scala-2.13 -->
