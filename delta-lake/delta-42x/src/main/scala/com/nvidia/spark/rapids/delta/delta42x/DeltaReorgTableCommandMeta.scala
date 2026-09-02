@@ -20,65 +20,14 @@ import scala.reflect.classTag
 
 import com.nvidia.spark.rapids._
 import com.nvidia.spark.rapids.delta.RapidsDeltaUtils
-import com.nvidia.spark.rapids.delta.common.{DeltaReorgTableCommandMetaBase,
-  OptimizeTableCommandMetaBase}
+import com.nvidia.spark.rapids.delta.common.DeltaReorgTableCommandMetaBase
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.delta.{DeltaLog, IcebergCompat, RowTracking, UniversalFormat}
-import org.apache.spark.sql.delta.commands.{DeletionVectorUtils, DeltaCommand,
-  DeltaReorgTableCommand, DeltaReorgTableMode, OptimizeTableCommand}
-import org.apache.spark.sql.delta.rapids.{GpuDeltaReorgTableCommand, GpuOptimizeTableCommand}
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.{IcebergCompat, RowTracking, UniversalFormat}
+import org.apache.spark.sql.delta.commands.{DeltaCommand, DeltaReorgTableCommand,
+  DeltaReorgTableMode}
+import org.apache.spark.sql.delta.rapids.GpuDeltaReorgTableCommand
 import org.apache.spark.sql.execution.command.RunnableCommand
-
-class OptimizeTableCommandMeta(
-    cmd: OptimizeTableCommand,
-    conf: RapidsConf,
-    parent: Option[RapidsMeta[_, _, _]],
-    rule: DataFromReplacementRule)
-  extends OptimizeTableCommandMetaBase(cmd, conf, parent, rule) {
-
-  private object DeltaCmdProxy extends DeltaCommand
-
-  override protected def getDeltaLogForOptimize(): DeltaLog = {
-    DeltaCmdProxy.getDeltaTable(cmd.child, "OPTIMIZE").deltaLog
-  }
-
-  override def tagSelfForGpu(): Unit = {
-    if (!conf.isDeltaWriteEnabled) {
-      willNotWorkOnGpu("Delta Lake output acceleration has been disabled. To enable set " +
-        s"${RapidsConf.ENABLE_DELTA_WRITE} to true")
-    }
-
-    val deltaLog = getDeltaLogForOptimize()
-    val snapshot = deltaLog.unsafeVolatileSnapshot
-
-    if (DeletionVectorUtils.deletionVectorsWritable(snapshot) &&
-        cmd.conf.getConf(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS)) {
-      willNotWorkOnGpu("Deletion vectors are not supported on GPU")
-    }
-
-    if (cmd.zOrderBy.nonEmpty) {
-      willNotWorkOnGpu("Z-Order optimize is not supported on GPU")
-    }
-
-    RapidsDeltaUtils.tagForDeltaWrite(
-      this,
-      snapshot.schema,
-      Some(deltaLog),
-      Map.empty,
-      SparkSession.active)
-
-    if (snapshot.isCatalogOwned) {
-      willNotWorkOnGpu("Delta 4.2 requires catalog-managed OPTIMIZE to run on CPU")
-    }
-  }
-
-  override def convertToGpu(): RunnableCommand = {
-    GpuOptimizeTableCommand(cmd.child, cmd.userPartitionPredicates, cmd.optimizeContext)(
-      cmd.zOrderBy)
-  }
-}
 
 object DeltaReorgTableCommandMeta {
   private val optimizeCommandConfKey = "spark.rapids.sql.command.OptimizeTableCommand"
