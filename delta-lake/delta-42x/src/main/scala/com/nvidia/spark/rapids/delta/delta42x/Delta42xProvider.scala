@@ -41,6 +41,8 @@ import org.apache.spark.sql.execution.datasources.v2.{AppendDataExecV1, AtomicCr
 
 object Delta42xProvider extends DeltaProviderBase with Logging {
 
+  override protected def getCDFRelationStrategy = Delta42xCDFRelationStrategy
+
   private def tagIfCatalogManagedTableProperty(
       meta: RapidsMeta[_, _, _],
       properties: Map[String, String],

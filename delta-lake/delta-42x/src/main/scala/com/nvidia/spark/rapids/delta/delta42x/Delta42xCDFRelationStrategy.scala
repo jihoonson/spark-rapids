@@ -14,13 +14,15 @@
  * limitations under the License.
  */
 
-package com.nvidia.spark.rapids.delta.common
+package com.nvidia.spark.rapids.delta.delta42x
+
+import com.nvidia.spark.rapids.delta.common.DeltaCDFRelationStrategyBase
 
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.DeltaCDFRelation
 
-object DeltaCDFRelationStrategy extends DeltaCDFRelationStrategyBase {
+object Delta42xCDFRelationStrategy extends DeltaCDFRelationStrategyBase {
 
   override protected def changesToBatchDF(cdf: DeltaCDFRelation): DataFrame =
-    DeltaCDFRelationShim.changesToBatchDF(cdf)
+    Delta42xCDFRelationShim.changesToBatchDF(cdf)
 }
