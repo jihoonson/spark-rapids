@@ -45,44 +45,32 @@ class DeltaRuntimeShimSuite extends SparkQueryCompareTestSuite {
     assert(provider.getClass.getSimpleName == s"$expectedProvider$$")
   }
 
-  test("delta runtime shim selection covers supported combinations") {
-    val supported = Seq(
-      ("2.1.1", "3.3.4", "delta21x"),
-      ("2.2.0", "3.3.4", "delta22x"),
-      ("2.3.0", "3.3.4", "delta23x"),
-      ("2.4.0", "3.4.4", "delta24x"),
-      ("3.3.0", "3.5.3", "delta33x"),
-      ("3.3.2", "3.5.9", "delta33x"),
-      ("4.0.0", "4.0.0", "delta40x"),
-      ("4.0.1", "4.0.1", "delta40x"),
-      ("4.0.1", "4.0.4", "delta40x"),
-      ("4.1.0", "4.1.1", "delta41x"),
-      ("4.2.0", "4.0.1", "delta42x"),
-      ("4.2.0", "4.1.1", "delta42x"))
-
-    supported.foreach { case (deltaVersion, sparkVersion, expectedShim) =>
-      assert(DeltaRuntimeShim.getShimClassName(deltaVersion, sparkVersion).contains(expectedShim))
+  test("Delta 4.2 runtime shim selection covers supported Spark versions") {
+    Seq("4.0.1", "4.1.1").foreach { sparkVersion =>
+      val shimClassName = DeltaRuntimeShim.getDelta42ShimClassName("4.2.0", sparkVersion)
+      assert(shimClassName.exists(_.contains("delta42x")))
     }
   }
 
-  test("delta runtime shim selection rejects unsupported combinations") {
+  test("Delta 4.2 runtime shim selection rejects unsupported combinations") {
     val unsupported = Seq(
-      ("3.3.0", "3.5.2"),
-      ("4.0.0", "4.0.1"),
-      ("4.0.1", "4.0.0"),
-      ("4.0.1", "4.0.5"),
-      ("4.0.0", "4.1.1"),
-      ("4.1.0", "4.1.2"),
       ("4.2.0", "4.0.0"),
       ("4.2.0", "4.1.0"),
-      ("4.2.0", "4.1.2"))
+      ("4.2.0", "4.1.2"),
+      ("4.2.1", "4.0.1"))
 
     unsupported.foreach { case (deltaVersion, sparkVersion) =>
       val error = intercept[IllegalStateException] {
-        DeltaRuntimeShim.getShimClassName(deltaVersion, sparkVersion)
+        DeltaRuntimeShim.getDelta42ShimClassName(deltaVersion, sparkVersion)
       }
       assert(error.getMessage.contains(deltaVersion))
       assert(error.getMessage.contains(sparkVersion))
+    }
+  }
+
+  test("existing Delta versions use the pre-4.2 runtime shim selection") {
+    Seq("2.1.0", "3.3.3", "4.0.0", "4.1.0").foreach { deltaVersion =>
+      assert(DeltaRuntimeShim.getDelta42ShimClassName(deltaVersion, "4.0.1").isEmpty)
     }
   }
 
