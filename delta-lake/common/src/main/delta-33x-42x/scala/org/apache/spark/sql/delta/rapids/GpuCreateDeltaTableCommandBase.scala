@@ -738,8 +738,6 @@ abstract class GpuCreateDeltaTableCommandBase(
       )
 
     // DataSourceV2 table replace
-    // REPLACE TABLE (non-DataFrameWriter API) doesn't have options syntax
-    // (userMetadata uses SQLConf in this case)
     case TableCreationModes.Replace =>
       DeltaRuntimeShim.buildReplaceTableOperation(
         metadata, isManagedTable, orCreate = false, query.isDefined, options, clusterBy,

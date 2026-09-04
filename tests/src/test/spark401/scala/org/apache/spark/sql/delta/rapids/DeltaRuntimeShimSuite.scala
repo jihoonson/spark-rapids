@@ -41,6 +41,7 @@ class DeltaRuntimeShimSuite extends SparkQueryCompareTestSuite {
       case "4.0.0" | "4.0.1" => "Delta40xProvider"
       case "4.1.0" => "Delta41xProvider"
       case "4.2.0" => "Delta42xProvider"
+      case _ => fail(s"Unexpected Delta Lake version: ${io.delta.VERSION}")
     }
     assert(provider.getClass.getSimpleName == s"$expectedProvider$$")
   }
