@@ -185,7 +185,10 @@ object Delta42xProvider extends DeltaProviderBase with Logging {
         super.convertToGpu(cpuExec, meta)
       case _: GpuDeltaCatalogBase#GpuStagedDeltaTableV2 =>
         GpuAppendDataExecV1(cpuExec.table, cpuExec.plan, cpuExec.refreshCache, cpuExec.write)
-      case unknown => throw new IllegalStateException(s"Unsupported table type for GPU conversion: $unknown. Expected DeltaTableV2 or GpuStagedDeltaTableV2")
+      case unknown =>
+        throw new IllegalStateException(
+          s"Unsupported table type for GPU conversion: $unknown. " +
+            "Expected DeltaTableV2 or GpuStagedDeltaTableV2")
     }
   }
 
@@ -198,7 +201,10 @@ object Delta42xProvider extends DeltaProviderBase with Logging {
       case _: GpuDeltaCatalogBase#GpuStagedDeltaTableV2 =>
         GpuOverwriteByExpressionExecV1(
           cpuExec.table, cpuExec.plan, cpuExec.refreshCache, cpuExec.write)
-      case unknown => throw new IllegalStateException(s"Unsupported table type for GPU conversion: $unknown. Expected DeltaTableV2 or GpuStagedDeltaTableV2")
+      case unknown =>
+        throw new IllegalStateException(
+          s"Unsupported table type for GPU conversion: $unknown. " +
+            "Expected DeltaTableV2 or GpuStagedDeltaTableV2")
     }
   }
 }

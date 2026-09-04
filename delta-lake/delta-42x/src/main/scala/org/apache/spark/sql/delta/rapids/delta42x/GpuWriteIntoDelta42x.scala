@@ -16,10 +16,11 @@
 
 package org.apache.spark.sql.delta.rapids.delta42x
 
+import com.nvidia.spark.rapids.delta.DeltaWriteUtils.toBooleanOption
+
 import org.apache.spark.sql.delta.DeltaOperations
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
-import org.apache.spark.sql.delta.rapids.{DeltaRuntimeShim, GpuDeltaLog, GpuWriteIntoDeltaBase,
-  GpuWriteIntoDeltaLike}
+import org.apache.spark.sql.delta.rapids.{GpuDeltaLog, GpuWriteIntoDeltaBase, GpuWriteIntoDeltaLike}
 
 /**
  * GPU version of Delta 4.2's WriteIntoDelta.
@@ -35,8 +36,14 @@ case class GpuWriteIntoDelta42x(
     with GpuWriteIntoDeltaLike {
 
   override protected def buildCommitMetadata: DeltaOperations.Operation = {
-    DeltaRuntimeShim.buildWriteOperation(
-      cpuWrite.mode, cpuWrite.partitionColumns, cpuWrite.options)
+    DeltaOperations.Write(
+      cpuWrite.mode,
+      Option(cpuWrite.partitionColumns),
+      cpuWrite.options.replaceWhere,
+      cpuWrite.options.userMetadata,
+      toBooleanOption(cpuWrite.options.isDynamicPartitionOverwriteMode),
+      toBooleanOption(cpuWrite.options.canOverwriteSchema),
+      toBooleanOption(cpuWrite.options.canMergeSchema))
   }
 
   override protected def copyWithCpuWrite(newCpuWrite: WriteIntoDelta): GpuWriteIntoDelta42x = {

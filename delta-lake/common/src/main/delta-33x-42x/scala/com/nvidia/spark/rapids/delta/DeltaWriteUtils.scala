@@ -22,6 +22,10 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.internal.SQLConf
 
 object DeltaWriteUtils {
+  def toBooleanOption(enabled: Boolean): Option[Boolean] = {
+    if (enabled) Some(true) else None
+  }
+
   // scalastyle:off line.size.limit
   /**
    * Optimized writes can be enabled/disabled through the following order:

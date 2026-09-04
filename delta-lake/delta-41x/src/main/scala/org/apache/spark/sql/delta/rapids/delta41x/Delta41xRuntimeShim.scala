@@ -20,6 +20,7 @@ import scala.util.Try
 
 import com.nvidia.spark.rapids.RapidsConf
 import com.nvidia.spark.rapids.delta.DeltaProvider
+import com.nvidia.spark.rapids.delta.DeltaWriteUtils.toBooleanOption
 import com.nvidia.spark.rapids.delta.delta41x.Delta41xProvider
 import com.nvidia.spark.rapids.delta.delta41x.GpuDeltaCatalog
 
@@ -98,9 +99,5 @@ class Delta41xRuntimeShim extends DeltaRuntimeShimBase {
 
   private def dynamicPartitionOverwriteOption(options: DeltaOptions): Option[Boolean] = {
     toBooleanOption(Try(options.isDynamicPartitionOverwriteMode).getOrElse(false))
-  }
-
-  private def toBooleanOption(enabled: Boolean): Option[Boolean] = {
-    if (enabled) Some(true) else None
   }
 }
