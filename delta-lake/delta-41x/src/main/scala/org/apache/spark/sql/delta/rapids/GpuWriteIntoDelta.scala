@@ -21,6 +21,8 @@
 
 package org.apache.spark.sql.delta.rapids
 
+import scala.util.Try
+
 import com.nvidia.spark.rapids.delta.DeltaWriteUtils.toBooleanOption
 
 import org.apache.spark.sql.delta.DeltaOperations
@@ -39,7 +41,7 @@ case class GpuWriteIntoDelta(
       Option(cpuWrite.partitionColumns),
       cpuWrite.options.replaceWhere,
       cpuWrite.options.userMetadata,
-      toBooleanOption(cpuWrite.options.isDynamicPartitionOverwriteMode),
+      toBooleanOption(Try(cpuWrite.options.isDynamicPartitionOverwriteMode).getOrElse(false)),
       toBooleanOption(cpuWrite.options.canOverwriteSchema),
       toBooleanOption(cpuWrite.options.canMergeSchema))
   }
