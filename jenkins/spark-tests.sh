@@ -352,7 +352,27 @@ run_delta_lake_tests() {
       # Delta Lake 1.2+ moved LogStore implementations into delta-storage.
       # All versions tested here are 2.0+, so include it explicitly.
       DELTA_JAR="${DELTA_MAIN_JAR},io.delta:delta-storage:$v"
-      HOST_NAME=$PROJECT_REPO_HOST \
+      DELTA_TEST_ENV=()
+      if [[ "$v" == "4.2.0" ]]; then
+        # Catalog-managed table tests use the OSS Unity Catalog server and Spark connector.
+        # Force UC's transitive Jackson dependencies to the versions bundled with Spark.
+        JACKSON_CORE_JARS=("$SPARK_HOME"/jars/jackson-core-*.jar)
+        JACKSON_CORE_VERSION=$(basename "${JACKSON_CORE_JARS[0]}" .jar)
+        JACKSON_CORE_VERSION=${JACKSON_CORE_VERSION#jackson-core-}
+        JACKSON_ANNOTATIONS_JARS=("$SPARK_HOME"/jars/jackson-annotations-*.jar)
+        JACKSON_ANNOTATIONS_VERSION=$(basename "${JACKSON_ANNOTATIONS_JARS[0]}" .jar)
+        JACKSON_ANNOTATIONS_VERSION=${JACKSON_ANNOTATIONS_VERSION#jackson-annotations-}
+        DELTA_JAR="${DELTA_JAR},io.unitycatalog:unitycatalog-spark_${SCALA_BINARY_VER}:0.4.1,io.unitycatalog:unitycatalog-server:0.4.1"
+        DELTA_JAR="${DELTA_JAR},com.fasterxml.jackson.core:jackson-core:${JACKSON_CORE_VERSION},com.fasterxml.jackson.core:jackson-annotations:${JACKSON_ANNOTATIONS_VERSION},com.fasterxml.jackson.core:jackson-databind:${JACKSON_CORE_VERSION}"
+        DELTA_JAR="${DELTA_JAR},com.fasterxml.jackson.module:jackson-module-scala_${SCALA_BINARY_VER}:${JACKSON_CORE_VERSION},com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:${JACKSON_CORE_VERSION},com.fasterxml.jackson.dataformat:jackson-dataformat-xml:${JACKSON_CORE_VERSION}"
+        DELTA_JAR="${DELTA_JAR},com.fasterxml.jackson.datatype:jackson-datatype-jsr310:${JACKSON_CORE_VERSION},com.fasterxml.jackson.datatype:jackson-datatype-jdk8:${JACKSON_CORE_VERSION}"
+        DELTA_TEST_ENV+=(
+          "PYSP_TEST_spark_hadoop_fs_s3_impl=com.nvidia.spark.rapids.tests.delta.CredentialTestFileSystem"
+          "PYSP_TEST_spark_rapids_perfio_s3_enabled=false"
+        )
+      fi
+      env "${DELTA_TEST_ENV[@]}" \
+        HOST_NAME=$PROJECT_REPO_HOST \
         PYSP_TEST_spark_jars_packages=${DELTA_JAR} \
         PYSP_TEST_spark_jars_ivySettings="${WORKSPACE}/jenkins/ivysettings.xml" \
         PYSP_TEST_spark_sql_extensions="io.delta.sql.DeltaSparkSessionExtension" \

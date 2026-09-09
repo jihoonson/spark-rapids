@@ -34,7 +34,7 @@ import org.apache.spark.sql.connector.catalog.{Identifier, StagedTable, StagingT
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsTruncate, V1Write, WriteBuilder}
-import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaConfigs, DeltaErrors, DeltaLog, DeltaOptions}
+import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaConfigs, DeltaErrors, DeltaLog, DeltaOptions, DeltaTableUtils}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.{TableCreationModes, WriteIntoDelta}
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -105,6 +105,27 @@ abstract class GpuDeltaCatalogBase(
    */
   protected def useCatalogCreateTable(sourceQuery: Option[DataFrame]): Boolean = {
     isUnityCatalog && sourceQuery.isEmpty
+  }
+
+  /**
+   * Constructs the Delta log used by CTAS and RTAS writes.
+   *
+   * Delta versions that carry catalog credentials or commit-coordinator state in the
+   * [[CatalogTable]] can override this hook. The default preserves the historical path-based
+   * behavior for older Delta integrations.
+   */
+  protected def getDeltaLogForWrite(
+      existingTableOpt: Option[CatalogTable],
+      tablePath: Path,
+      fileSystemOptions: Map[String, String]): DeltaLog = {
+    DeltaLog.forTable(spark, tablePath, fileSystemOptions)
+  }
+
+  /** Creates the final catalog entry after a staged Delta commit. */
+  protected def createTableInCatalog(ident: Identifier, table: CatalogTable): Unit = {
+    val v1Table = DeltaTrampoline.getV1Table(table)
+    cpuCatalog.createTable(
+      ident, v1Table.columns(), v1Table.partitioning, v1Table.properties)
   }
 
   /** copied from trait SupportsPathIdentifier */
@@ -283,7 +304,10 @@ abstract class GpuDeltaCatalogBase(
       )
 
     val writer = sourceQuery.map { df =>
-      val deltaLog = DeltaLog.forTable(spark, new Path(loc))
+      val fileSystemOptions = writeOptions.filter { case (k, _) =>
+        DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
+      }
+      val deltaLog = getDeltaLogForWrite(existingTableOpt, new Path(loc), fileSystemOptions)
       val cpuWriter = WriteIntoDelta(
         deltaLog,
         operation.mode,
@@ -306,8 +330,7 @@ abstract class GpuDeltaCatalogBase(
     //       if UC is enabled to replace `V2SessionCatalog`.
     val tableCreateFunc = if (useCatalogCreateTable(sourceQuery)) {
       Some[CatalogTable => Unit](v1Table => {
-        val t = DeltaTrampoline.getV1Table(v1Table)
-        cpuCatalog.createTable(ident, t.columns(), t.partitioning, t.properties)
+        createTableInCatalog(ident, v1Table)
       })
     } else {
       None
