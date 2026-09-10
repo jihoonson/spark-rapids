@@ -12,18 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import socket
-import time
 import uuid
 
 import pytest
 
 from asserts import assert_cpu_and_gpu_are_equal_collect_with_capture
-from conftest import spark_jvm
+from conftest import spark_jvm, unity_catalog_storage_root, unity_catalog_uri
 from delta_lake_utils import (assert_rapids_delta_write, assert_rapids_gpu_delete_ran,
                               delta_meta_allow, delta_writes_enabled_conf,
                               is_oss_delta_lake_42)
-from marks import allow_non_gpu, delta_lake
+from marks import allow_non_gpu, delta_lake, unity_catalog
 from spark_session import with_cpu_session, with_gpu_session
 
 
@@ -38,12 +36,6 @@ _UC_TABLE_ID_PROPERTY = "io.unitycatalog.tableId"
 _STATIC_TOKEN = "static-token"
 
 
-def _free_port():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("localhost", 0))
-        return sock.getsockname()[1]
-
-
 def _api_client(jvm, uri):
     token_config = jvm.java.util.HashMap()
     token_config.put("type", "static")
@@ -56,44 +48,22 @@ def _api_client(jvm, uri):
 
 
 @pytest.fixture(scope="module")
-def unity_catalog(tmp_path_factory):
+def unity_catalog_server():
+    """
+    Connects to the Unity Catalog server started by the test harness.
+
+    The server runs in its own JVM so that only the Unity Catalog Spark connector, and not the
+    server and its dependency tree, ends up on the Spark classpath. `DELTA_UC_URI` and
+    `DELTA_UC_STORAGE_ROOT` are exported by jenkins/spark-tests.sh; see
+    integration_tests/README.md for running this suite by hand.
+    """
     jvm = spark_jvm()
-    assert jvm.io.unitycatalog.client.VersionUtils.VERSION == "0.4.1"
-
-    storage_root = tmp_path_factory.mktemp("catalog-managed-tables")
-    port = _free_port()
-    uri = f"http://localhost:{port}/"
-
-    properties = jvm.java.util.Properties()
-    properties.setProperty("server.env", "test")
-    properties.setProperty("server.managed-table.enabled", "true")
-    properties.setProperty("storage-root.tables", f"s3://test-bucket0{storage_root}")
-    properties.setProperty("s3.bucketPath.0", "s3://test-bucket0")
-    properties.setProperty("s3.accessKey.0", "accessKey0")
-    properties.setProperty("s3.secretKey.0", "secretKey0")
-    properties.setProperty("s3.sessionToken.0", "sessionToken0")
-
-    server_properties = jvm.io.unitycatalog.server.utils.ServerProperties(properties)
-    server = jvm.io.unitycatalog.server.UnityCatalogServer.builder() \
-        .port(port) \
-        .serverProperties(server_properties) \
-        .build()
-    server.start()
+    uri = unity_catalog_uri()
+    storage_root = unity_catalog_storage_root()
+    assert storage_root, "DELTA_UC_STORAGE_ROOT must be set alongside DELTA_UC_URI"
 
     client = _api_client(jvm, uri)
     catalogs_api = jvm.io.unitycatalog.client.api.CatalogsApi(client)
-    last_error = None
-    for _ in range(30):
-        try:
-            catalogs_api.listCatalogs(None, None)
-            break
-        except Exception as error:  # The server starts asynchronously.
-            last_error = error
-            time.sleep(0.5)
-    else:
-        server.stop()
-        raise RuntimeError("Unity Catalog server did not become ready") from last_error
-
     catalogs_api.createCatalog(
         jvm.io.unitycatalog.client.model.CreateCatalog()
         .name(_CATALOG)
@@ -103,22 +73,19 @@ def unity_catalog(tmp_path_factory):
         .name(_SCHEMA)
         .catalogName(_CATALOG))
 
-    try:
-        yield {
-            "uri": uri,
-            "storage_root": str(storage_root),
-            "tables_api": jvm.io.unitycatalog.client.api.TablesApi(client),
-        }
-    finally:
-        server.stop()
+    yield {
+        "uri": uri,
+        "storage_root": storage_root,
+        "tables_api": jvm.io.unitycatalog.client.api.TablesApi(client),
+    }
 
 
-def _catalog_conf(unity_catalog):
+def _catalog_conf(unity_catalog_server):
     prefix = f"spark.sql.catalog.{_CATALOG}"
     return {
         **delta_writes_enabled_conf,
         prefix: "io.unitycatalog.spark.UCSingleCatalog",
-        f"{prefix}.uri": unity_catalog["uri"],
+        f"{prefix}.uri": unity_catalog_server["uri"],
         f"{prefix}.token": _STATIC_TOKEN,
         f"{prefix}.warehouse": _CATALOG,
         f"{prefix}.renewCredential.enabled": "false",
@@ -172,9 +139,10 @@ def _error_class(action):
 
 @allow_non_gpu(*delta_meta_allow)
 @delta_lake
-def test_catalog_managed_ctas_insert_and_deletion_vector_scan(unity_catalog):
+@unity_catalog
+def test_catalog_managed_ctas_insert_and_deletion_vector_scan(unity_catalog_server):
     table_name, table = _new_table_name("catalog_managed_smoke")
-    conf = _catalog_conf(unity_catalog)
+    conf = _catalog_conf(unity_catalog_server)
 
     try:
         def create_table(spark):
@@ -201,7 +169,7 @@ def test_catalog_managed_ctas_insert_and_deletion_vector_scan(unity_catalog):
         detail = with_cpu_session(
             lambda spark: spark.sql(f"DESCRIBE DETAIL {table}").first().asDict(),
             conf=conf)
-        table_info = unity_catalog["tables_api"].getTable(table, None, None)
+        table_info = unity_catalog_server["tables_api"].getTable(table, None, None)
         catalog_properties = dict(table_info.getProperties())
         assert detail["location"].startswith("s3://test-bucket0/")
         assert catalog_properties[_CATALOG_MANAGED_PROPERTY] == "supported"
@@ -238,9 +206,10 @@ def test_catalog_managed_ctas_insert_and_deletion_vector_scan(unity_catalog):
 
 @allow_non_gpu(*delta_meta_allow)
 @delta_lake
-def test_catalog_managed_atomic_replace_time_travel_and_cdf(unity_catalog):
+@unity_catalog
+def test_catalog_managed_atomic_replace_time_travel_and_cdf(unity_catalog_server):
     _, table = _new_table_name("catalog_managed_replace")
-    conf = _catalog_conf(unity_catalog)
+    conf = _catalog_conf(unity_catalog_server)
 
     try:
         assert_rapids_delta_write(
@@ -258,7 +227,7 @@ def test_catalog_managed_atomic_replace_time_travel_and_cdf(unity_catalog):
         original_detail = with_cpu_session(
             lambda spark: spark.sql(f"DESCRIBE DETAIL {table}").first().asDict(),
             conf=conf)
-        original_table_id = unity_catalog["tables_api"].getTable(
+        original_table_id = unity_catalog_server["tables_api"].getTable(
             table, None, None).getTableId()
 
         assert_rapids_delta_write(
@@ -277,7 +246,7 @@ def test_catalog_managed_atomic_replace_time_travel_and_cdf(unity_catalog):
         replaced_detail = with_cpu_session(
             lambda spark: spark.sql(f"DESCRIBE DETAIL {table}").first().asDict(),
             conf=conf)
-        replaced_table_id = unity_catalog["tables_api"].getTable(
+        replaced_table_id = unity_catalog_server["tables_api"].getTable(
             table, None, None).getTableId()
         assert replaced_detail["id"] == original_detail["id"]
         assert replaced_detail["location"] == original_detail["location"]
@@ -306,9 +275,10 @@ def test_catalog_managed_atomic_replace_time_travel_and_cdf(unity_catalog):
 
 @allow_non_gpu("CreateTableExec", "AtomicReplaceTableExec", *delta_meta_allow)
 @delta_lake
-def test_catalog_managed_create_replace_and_rtas(unity_catalog):
+@unity_catalog
+def test_catalog_managed_create_replace_and_rtas(unity_catalog_server):
     _, table = _new_table_name("catalog_managed_create_replace")
-    conf = _catalog_conf(unity_catalog)
+    conf = _catalog_conf(unity_catalog_server)
 
     try:
         with_gpu_session(
@@ -321,7 +291,7 @@ def test_catalog_managed_create_replace_and_rtas(unity_catalog):
         original_detail = with_cpu_session(
             lambda spark: spark.sql(f"DESCRIBE DETAIL {table}").first().asDict(),
             conf=conf)
-        original_table_id = unity_catalog["tables_api"].getTable(
+        original_table_id = unity_catalog_server["tables_api"].getTable(
             table, None, None).getTableId()
 
         assert_rapids_delta_write(
@@ -340,7 +310,7 @@ def test_catalog_managed_create_replace_and_rtas(unity_catalog):
         replaced_detail = with_cpu_session(
             lambda spark: spark.sql(f"DESCRIBE DETAIL {table}").first().asDict(),
             conf=conf)
-        replaced_table_id = unity_catalog["tables_api"].getTable(
+        replaced_table_id = unity_catalog_server["tables_api"].getTable(
             table, None, None).getTableId()
         assert replaced_detail["id"] == original_detail["id"]
         assert replaced_detail["location"] == original_detail["location"]
@@ -362,9 +332,10 @@ def test_catalog_managed_create_replace_and_rtas(unity_catalog):
 
 @allow_non_gpu(*delta_meta_allow)
 @delta_lake
-def test_catalog_managed_liquid_clustering(unity_catalog):
+@unity_catalog
+def test_catalog_managed_liquid_clustering(unity_catalog_server):
     _, table = _new_table_name("catalog_managed_clustered")
-    conf = _catalog_conf(unity_catalog)
+    conf = _catalog_conf(unity_catalog_server)
 
     try:
         assert_rapids_delta_write(
@@ -382,7 +353,7 @@ def test_catalog_managed_liquid_clustering(unity_catalog):
             lambda spark: spark.sql(f"DESCRIBE DETAIL {table}").first().asDict(),
             conf=conf)
         catalog_properties = dict(
-            unity_catalog["tables_api"].getTable(table, None, None).getProperties())
+            unity_catalog_server["tables_api"].getTable(table, None, None).getProperties())
         assert detail["clusteringColumns"] == ["id"]
         assert catalog_properties["clusteringColumns"] == '[["id"]]'
         assert catalog_properties["delta.feature.clustering"] == "supported"
@@ -407,12 +378,13 @@ def test_catalog_managed_liquid_clustering(unity_catalog):
 
 @allow_non_gpu("ExecutedCommandExec", *delta_meta_allow)
 @delta_lake
-def test_catalog_managed_create_replace_rejections_and_abort(unity_catalog):
+@unity_catalog
+def test_catalog_managed_create_replace_rejections_and_abort(unity_catalog_server):
     _, cpu_table = _new_table_name("catalog_managed_cpu_reject")
     _, gpu_table = _new_table_name("catalog_managed_gpu_reject")
     missing_name, missing_table = _new_table_name("catalog_managed_or_create")
     failed_name, failed_table = _new_table_name("catalog_managed_failed_create")
-    conf = _catalog_conf(unity_catalog)
+    conf = _catalog_conf(unity_catalog_server)
 
     def create(spark, table):
         return spark.sql(f"""
@@ -489,9 +461,10 @@ def test_catalog_managed_create_replace_rejections_and_abort(unity_catalog):
 
 @allow_non_gpu(*delta_meta_allow)
 @delta_lake
-def test_catalog_managed_v1_v2_and_overwrite_writes(unity_catalog):
+@unity_catalog
+def test_catalog_managed_v1_v2_and_overwrite_writes(unity_catalog_server):
     _, table = _new_table_name("catalog_managed_writes")
-    conf = _catalog_conf(unity_catalog)
+    conf = _catalog_conf(unity_catalog_server)
     optimized_conf = {
         **conf,
         "spark.databricks.delta.optimizeWrite.enabled": "true",
@@ -551,10 +524,11 @@ def test_catalog_managed_v1_v2_and_overwrite_writes(unity_catalog):
 
 @allow_non_gpu(*delta_meta_allow)
 @delta_lake
-def test_catalog_managed_schema_merge_and_overwrite(unity_catalog):
+@unity_catalog
+def test_catalog_managed_schema_merge_and_overwrite(unity_catalog_server):
     _, cpu_table = _new_table_name("catalog_managed_cpu_schema")
     _, gpu_table = _new_table_name("catalog_managed_gpu_schema")
-    conf = _catalog_conf(unity_catalog)
+    conf = _catalog_conf(unity_catalog_server)
 
     def create(spark, table):
         return spark.sql(f"""
@@ -610,10 +584,11 @@ def test_catalog_managed_schema_merge_and_overwrite(unity_catalog):
 
 @allow_non_gpu(*delta_meta_allow)
 @delta_lake
-def test_catalog_managed_external_table_regression(unity_catalog):
+@unity_catalog
+def test_catalog_managed_external_table_regression(unity_catalog_server):
     _, table = _new_table_name("unity_external")
-    location = f"s3://test-bucket0{unity_catalog['storage_root']}/{uuid.uuid4().hex}"
-    conf = _catalog_conf(unity_catalog)
+    location = f"s3://test-bucket0{unity_catalog_server['storage_root']}/{uuid.uuid4().hex}"
+    conf = _catalog_conf(unity_catalog_server)
 
     try:
         assert_rapids_delta_write(
@@ -625,7 +600,7 @@ def test_catalog_managed_external_table_regression(unity_catalog):
                     (1L, 'one'), (2L, 'two') AS source(id, value)
                 """).collect(),
             conf=conf)
-        table_info = unity_catalog["tables_api"].getTable(table, None, None)
+        table_info = unity_catalog_server["tables_api"].getTable(table, None, None)
         assert table_info.getTableType().toString() == "EXTERNAL"
         assert table_info.getStorageLocation() == location
         assert _CATALOG_MANAGED_PROPERTY not in dict(table_info.getProperties())
@@ -645,10 +620,11 @@ def test_catalog_managed_external_table_regression(unity_catalog):
 
 @allow_non_gpu(*delta_meta_allow)
 @delta_lake
-def test_catalog_managed_delete_update_and_merge(unity_catalog):
+@unity_catalog
+def test_catalog_managed_delete_update_and_merge(unity_catalog_server):
     _, table = _new_table_name("catalog_managed_dml")
     conf = {
-        **_catalog_conf(unity_catalog),
+        **_catalog_conf(unity_catalog_server),
         "spark.databricks.delta.delete.deletionVectors.persistent": "false",
         "spark.databricks.delta.update.deletionVectors.persistent": "false",
         "spark.databricks.delta.merge.deletionVectors.persistent": "false",

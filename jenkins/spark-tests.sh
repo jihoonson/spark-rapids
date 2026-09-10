@@ -352,26 +352,7 @@ run_delta_lake_tests() {
       # Delta Lake 1.2+ moved LogStore implementations into delta-storage.
       # All versions tested here are 2.0+, so include it explicitly.
       DELTA_JAR="${DELTA_MAIN_JAR},io.delta:delta-storage:$v"
-      DELTA_TEST_ENV=()
-      if [[ "$v" == "4.2.0" ]]; then
-        # Catalog-managed table tests use the OSS Unity Catalog server and Spark connector.
-        # Force UC's transitive Jackson dependencies to the versions bundled with Spark.
-        JACKSON_CORE_JARS=("$SPARK_HOME"/jars/jackson-core-*.jar)
-        JACKSON_CORE_VERSION=$(basename "${JACKSON_CORE_JARS[0]}" .jar)
-        JACKSON_CORE_VERSION=${JACKSON_CORE_VERSION#jackson-core-}
-        JACKSON_ANNOTATIONS_JARS=("$SPARK_HOME"/jars/jackson-annotations-*.jar)
-        JACKSON_ANNOTATIONS_VERSION=$(basename "${JACKSON_ANNOTATIONS_JARS[0]}" .jar)
-        JACKSON_ANNOTATIONS_VERSION=${JACKSON_ANNOTATIONS_VERSION#jackson-annotations-}
-        DELTA_JAR="${DELTA_JAR},io.unitycatalog:unitycatalog-spark_${SCALA_BINARY_VER}:0.4.1,io.unitycatalog:unitycatalog-server:0.4.1"
-        DELTA_JAR="${DELTA_JAR},com.fasterxml.jackson.core:jackson-core:${JACKSON_CORE_VERSION},com.fasterxml.jackson.core:jackson-annotations:${JACKSON_ANNOTATIONS_VERSION},com.fasterxml.jackson.core:jackson-databind:${JACKSON_CORE_VERSION}"
-        DELTA_JAR="${DELTA_JAR},com.fasterxml.jackson.module:jackson-module-scala_${SCALA_BINARY_VER}:${JACKSON_CORE_VERSION},com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:${JACKSON_CORE_VERSION},com.fasterxml.jackson.dataformat:jackson-dataformat-xml:${JACKSON_CORE_VERSION}"
-        DELTA_JAR="${DELTA_JAR},com.fasterxml.jackson.datatype:jackson-datatype-jsr310:${JACKSON_CORE_VERSION},com.fasterxml.jackson.datatype:jackson-datatype-jdk8:${JACKSON_CORE_VERSION}"
-        DELTA_TEST_ENV+=(
-          "PYSP_TEST_spark_hadoop_fs_s3_impl=com.nvidia.spark.rapids.tests.delta.CredentialTestFileSystem"
-          "PYSP_TEST_spark_rapids_perfio_s3_enabled=false"
-        )
-      fi
-      env "${DELTA_TEST_ENV[@]}" \
+      env \
         HOST_NAME=$PROJECT_REPO_HOST \
         PYSP_TEST_spark_jars_packages=${DELTA_JAR} \
         PYSP_TEST_spark_jars_ivySettings="${WORKSPACE}/jenkins/ivysettings.xml" \
@@ -380,6 +361,88 @@ run_delta_lake_tests() {
         ./run_pyspark_from_build.sh -m delta_lake --delta_lake
     done
   fi
+}
+
+# Delta Lake catalog-managed table tests against an OSS Unity Catalog server.
+#
+# This is deliberately a separate invocation from run_delta_lake_tests: the Unity Catalog
+# connector and its dependency tree only belong on the classpath of the tests that need it.
+# The server itself runs in its own JVM, so unitycatalog-server (Armeria, Vert.x, Hibernate,
+# Spring, ...) never reaches Spark at all.
+run_delta_lake_uc_tests() {
+  local uc_version=${UNITY_CATALOG_VERSION:-'0.4.1'}
+  local delta_version='4.2.0'
+  local delta_spark_line=${SPARK_VER%.*}
+
+  if [[ "$SCALA_BINARY_VER" != "2.13" ]]; then
+    echo "!!!! Skipping Unity Catalog tests. They require Scala 2.13"
+    return 0
+  fi
+  if ! echo "$DELTA_LAKE_VERSIONS" | grep -qw "$delta_version"; then
+    echo "!!!! Skipping Unity Catalog tests. They require Delta Lake $delta_version"
+    return 0
+  fi
+
+  # The Spark session only needs the Delta and Unity Catalog client jars. Jackson comes from
+  # Spark itself; excluding it here avoids pinning Unity Catalog's transitive versions by hand.
+  local spark_jars="io.delta:delta-spark_${delta_spark_line}_${SCALA_BINARY_VER}:${delta_version},\
+io.delta:delta-storage:${delta_version},\
+io.unitycatalog:unitycatalog-spark_${SCALA_BINARY_VER}:${uc_version}"
+  local spark_classpath
+  spark_classpath=$(download_maven_jars "$spark_jars" \
+    "com.fasterxml.jackson.core,com.fasterxml.jackson.module,com.fasterxml.jackson.dataformat,com.fasterxml.jackson.datatype")
+
+  local server_classpath
+  server_classpath=$(download_maven_jars "io.unitycatalog:unitycatalog-server:${uc_version}")
+
+  local uc_dir
+  uc_dir=$(mktemp -d "$ARTF_ROOT/unity-catalog-XXXXXX")
+  local storage_root="$uc_dir/storage"
+  mkdir -p "$storage_root" "$uc_dir/vertx-cache"
+
+  # The client-facing port; the server binds its API port at UC_PORT+1.
+  local uc_port=${UNITY_CATALOG_PORT:-'18080'}
+  local uc_uri="http://localhost:${uc_port}/"
+
+  # Every server setting can be supplied as a system property, so no server.properties is needed.
+  # vertx.cacheDirBase is redirected because Vert.x otherwise writes to /tmp.
+  java -Dvertx.cacheDirBase="$uc_dir/vertx-cache" \
+    -Dserver.env=test \
+    -Dserver.managed-table.enabled=true \
+    -Dstorage-root.tables="s3://test-bucket0${storage_root}" \
+    -Ds3.bucketPath.0=s3://test-bucket0 \
+    -Ds3.accessKey.0=accessKey0 \
+    -Ds3.secretKey.0=secretKey0 \
+    -Ds3.sessionToken.0=sessionToken0 \
+    -cp "$server_classpath" io.unitycatalog.server.UnityCatalogServer --port "$uc_port" \
+    > "$uc_dir/server.log" 2>&1 &
+  local uc_pid=$!
+  # shellcheck disable=SC2064  # uc_pid must be expanded now, not when the trap fires.
+  trap "kill $uc_pid 2>/dev/null || true" EXIT
+
+  if ! wget -q --retry-connrefused --tries=60 --waitretry=1 --timeout=120 \
+      -O /dev/null "${uc_uri}api/2.1/unity-catalog/catalogs"; then
+    echo "!!!! Unity Catalog server did not become ready, see $uc_dir/server.log"
+    cat "$uc_dir/server.log"
+    return 1
+  fi
+
+  # CredentialTestFileSystem maps the fake s3 bucket onto local disk and asserts that the
+  # catalog-vended credentials reached the filesystem, so path-only access cannot pass.
+  env \
+    HOST_NAME=$PROJECT_REPO_HOST \
+    EXTRA_MAVEN_CLASSPATH="$spark_classpath" \
+    DELTA_UC_URI="$uc_uri" \
+    DELTA_UC_STORAGE_ROOT="$storage_root" \
+    PYSP_TEST_spark_sql_extensions="io.delta.sql.DeltaSparkSessionExtension" \
+    PYSP_TEST_spark_sql_catalog_spark__catalog="org.apache.spark.sql.delta.catalog.DeltaCatalog" \
+    PYSP_TEST_spark_hadoop_fs_s3_impl="com.nvidia.spark.rapids.tests.delta.CredentialTestFileSystem" \
+    PYSP_TEST_spark_rapids_perfio_s3_enabled=false \
+    ./run_pyspark_from_build.sh -m unity_catalog --delta_lake --unity_catalog
+
+  # On failure `set -e` exits and the EXIT trap stops the server instead.
+  kill "$uc_pid" 2>/dev/null || true
+  trap - EXIT
 }
 
 run_iceberg_tests() {
@@ -594,6 +657,7 @@ run_non_utc_time_zone_tests() {
 # TEST_MODE
 # - DEFAULT: all tests except cudf_udf tests
 # - DELTA_LAKE_ONLY: Delta Lake tests only
+# - DELTA_LAKE_UC_ONLY: Delta Lake catalog-managed table tests against an OSS Unity Catalog server
 # - ICEBERG_ONLY: iceberg tests only
 # - ICEBERG_S3TABLES_ONLY: iceberg s3tables tests only
 # - ICEBERG_REST_CATALOG_ONLY: iceberg rest catalog tests only
@@ -645,6 +709,11 @@ fi
 # Delta Lake tests
 if [[ "$TEST_MODE" == "DEFAULT" || "$TEST_MODE" == "DELTA_LAKE_ONLY" ]]; then
   run_delta_lake_tests
+fi
+
+# Delta Lake catalog-managed table tests
+if [[ "$TEST_MODE" == "DELTA_LAKE_UC_ONLY" ]]; then
+  run_delta_lake_uc_tests
 fi
 
 # Iceberg tests
