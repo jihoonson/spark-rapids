@@ -23,6 +23,8 @@ package com.nvidia.spark.rapids.delta.delta42x
 
 import java.lang.reflect.{InvocationHandler, InvocationTargetException, Method, Modifier, Proxy}
 
+import scala.util.control.NonFatal
+
 import com.nvidia.spark.rapids.RapidsConf
 import org.apache.hadoop.fs.Path
 
@@ -122,6 +124,54 @@ object GpuDeltaCatalog {
     catalog.getClass.getCanonicalName == UnityCatalogClassName
   }
 
+  /** Instance fields this class inherits, qualified by the class that declares them. */
+  private def inheritedInstanceFields(clazz: Class[_]): Seq[String] = {
+    Option(clazz.getSuperclass).toSeq.flatMap { superClass =>
+      superClass.getDeclaredFields
+        .filterNot(field => Modifier.isStatic(field.getModifiers))
+        .map(field => s"${superClass.getName}.${field.getName}") ++
+        inheritedInstanceFields(superClass)
+    }
+  }
+
+  /**
+   * Checks whether [[wrapUnityCatalog]] understands the internals of this Unity Catalog build.
+   *
+   * The wrapper depends on private state that is not part of any public API. Unity Catalog
+   * versions other than the one this integration was written against are still accepted, so these
+   * checks run while tagging: an unrecognized build then falls back to the CPU with a reason
+   * instead of failing the query part-way through plan conversion.
+   *
+   * @return the reason the catalog cannot be wrapped, or `None` when it can be
+   */
+  def unsupportedUnityCatalogReason(catalog: StagingTableCatalog): Option[String] = {
+    val catalogClass = catalog.getClass
+    try {
+      // A staging-only copy is built by cloning every declared field, so state declared by a
+      // superclass would be silently dropped rather than reported.
+      val inherited = inheritedInstanceFields(catalogClass)
+      val delegateField = catalogClass.getDeclaredField("delegate")
+      delegateField.setAccessible(true)
+      catalogClass.getDeclaredConstructor()
+      if (inherited.nonEmpty) {
+        Some(s"$UnityCatalogClassName declares inherited state ${inherited.mkString(", ")} that " +
+          "the GPU Delta catalog wrapper does not know how to copy")
+      } else if (!delegateField.getType.isAssignableFrom(classOf[GpuDeltaCatalog])) {
+        Some(s"$UnityCatalogClassName delegate field of type ${delegateField.getType.getName} " +
+          "cannot hold the GPU Delta catalog")
+      } else if (!delegateField.get(catalog).isInstanceOf[DeltaCatalog]) {
+        Some(s"$UnityCatalogClassName delegate " +
+          s"${delegateField.get(catalog).getClass.getName} is not a Delta catalog")
+      } else {
+        None
+      }
+    } catch {
+      case NonFatal(e) =>
+        Some(s"$UnityCatalogClassName internals are not recognized by the GPU Delta catalog " +
+          s"wrapper: $e")
+    }
+  }
+
   /**
    * Wraps OSS Unity Catalog while preserving its staging protocol.
    *
@@ -133,6 +183,9 @@ object GpuDeltaCatalog {
       catalog: StagingTableCatalog,
       rapidsConf: RapidsConf): StagingTableCatalog = {
     require(isUnityCatalog(catalog), s"Expected OSS Unity Catalog, found ${catalog.getClass}")
+    // Tagging rejects these catalogs, so reaching here means the check above was skipped.
+    unsupportedUnityCatalogReason(catalog).foreach(reason =>
+      throw new IllegalStateException(reason))
 
     val delegateField = catalog.getClass.getDeclaredField("delegate")
     delegateField.setAccessible(true)

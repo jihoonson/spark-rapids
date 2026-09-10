@@ -63,6 +63,15 @@ object Delta42xProvider extends DeltaProviderBase with Logging {
     WriteIntoDelta(deltaLog, mode, options, Nil, configuration, data, catalogTable)
   }
 
+  private def tagIfUnityCatalogUnsupported(
+      meta: RapidsMeta[_, _, _],
+      catalog: StagingTableCatalog): Unit = {
+    if (GpuDeltaCatalog.isUnityCatalog(catalog)) {
+      GpuDeltaCatalog.unsupportedUnityCatalogReason(catalog).foreach(reason =>
+        meta.willNotWorkOnGpu(reason))
+    }
+  }
+
   private def tagIfTargetTableUnsupported(
       meta: RapidsMeta[_, _, _],
       cpuExec: AtomicReplaceTableAsSelectExec): Unit = {
@@ -92,12 +101,14 @@ object Delta42xProvider extends DeltaProviderBase with Logging {
       cpuExec: AtomicCreateTableAsSelectExec,
       meta: AtomicCreateTableAsSelectExecMeta): Unit = {
     super.tagForGpu(cpuExec, meta)
+    tagIfUnityCatalogUnsupported(meta, cpuExec.catalog)
   }
 
   override def tagForGpu(
       cpuExec: AtomicReplaceTableAsSelectExec,
       meta: AtomicReplaceTableAsSelectExecMeta): Unit = {
     super.tagForGpu(cpuExec, meta)
+    tagIfUnityCatalogUnsupported(meta, cpuExec.catalog)
     tagIfTargetTableUnsupported(meta, cpuExec)
   }
 
