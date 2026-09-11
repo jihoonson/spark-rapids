@@ -412,35 +412,36 @@ def test_catalog_managed_liquid_clustering(unity_catalog_server):
         _drop_table(table, conf)
 
 
+def _create_catalog_managed_table(spark, table):
+    return spark.sql(f"""
+        CREATE TABLE {table}
+        USING DELTA
+        TBLPROPERTIES ('{_CATALOG_MANAGED_PROPERTY}' = 'supported')
+        AS SELECT 1L AS id, 'original' AS value
+        """).collect()
+
+
 @allow_non_gpu("ExecutedCommandExec", *delta_meta_allow)
 @delta_lake
 @unity_catalog
-def test_catalog_managed_create_replace_rejections_and_abort(unity_catalog_server):
+def test_catalog_managed_metadata_changing_replace_rejected(unity_catalog_server):
+    """A replace that changes the schema is rejected identically on CPU and GPU."""
     _, cpu_table = _new_table_name("catalog_managed_cpu_reject")
     _, gpu_table = _new_table_name("catalog_managed_gpu_reject")
-    missing_name, missing_table = _new_table_name("catalog_managed_or_create")
-    failed_name, failed_table = _new_table_name("catalog_managed_failed_create")
     conf = _catalog_conf(unity_catalog_server)
 
-    def create(spark, table):
+    def metadata_changing_replace(spark, table):
         return spark.sql(f"""
-            CREATE TABLE {table}
+            CREATE OR REPLACE TABLE {table}
             USING DELTA
             TBLPROPERTIES ('{_CATALOG_MANAGED_PROPERTY}' = 'supported')
-            AS SELECT 1L AS id, 'original' AS value
+            AS SELECT 2L AS id, 'replacement' AS value, 'new' AS extra
             """).collect()
 
     try:
-        with_cpu_session(lambda spark: create(spark, cpu_table), conf=conf)
-        assert_rapids_delta_write(lambda spark: create(spark, gpu_table), conf=conf)
-
-        def metadata_changing_replace(spark, table):
-            return spark.sql(f"""
-                CREATE OR REPLACE TABLE {table}
-                USING DELTA
-                TBLPROPERTIES ('{_CATALOG_MANAGED_PROPERTY}' = 'supported')
-                AS SELECT 2L AS id, 'replacement' AS value, 'new' AS extra
-                """).collect()
+        with_cpu_session(lambda spark: _create_catalog_managed_table(spark, cpu_table), conf=conf)
+        assert_rapids_delta_write(
+            lambda spark: _create_catalog_managed_table(spark, gpu_table), conf=conf)
 
         cpu_error = _error_class(
             lambda: with_cpu_session(
@@ -451,25 +452,50 @@ def test_catalog_managed_create_replace_rejections_and_abort(unity_catalog_serve
         assert cpu_error == gpu_error == "DELTA_OPERATION_NOT_ALLOWED"
         assert _table_rows(cpu_table, conf) == [(1, "original")]
         assert _table_rows(gpu_table, conf) == [(1, "original")]
+    finally:
+        _drop_table(cpu_table, conf)
+        _drop_table(gpu_table, conf)
 
+
+@allow_non_gpu("ExecutedCommandExec", *delta_meta_allow)
+@delta_lake
+@unity_catalog
+def test_catalog_managed_create_or_replace_missing_table(unity_catalog_server):
+    """CREATE OR REPLACE of a missing table creates it through Unity Catalog only."""
+    table_name, table = _new_table_name("catalog_managed_or_create")
+    conf = _catalog_conf(unity_catalog_server)
+
+    try:
         assert_rapids_delta_write(
             lambda spark: spark.sql(f"""
-                CREATE OR REPLACE TABLE {missing_table}
+                CREATE OR REPLACE TABLE {table}
                 USING DELTA
                 TBLPROPERTIES ('{_CATALOG_MANAGED_PROPERTY}' = 'supported')
                 AS SELECT 3L AS id, 'created' AS value
                 """).collect(),
             conf=conf)
-        assert _table_rows(missing_table, conf) == [(3, "created")]
+        assert _table_rows(table, conf) == [(3, "created")]
         assert with_cpu_session(
             lambda spark: spark.sql(
-                f"SHOW TABLES IN spark_catalog.default LIKE '{missing_name}'").collect(),
+                f"SHOW TABLES IN spark_catalog.default LIKE '{table_name}'").collect(),
             conf=conf) == []
+    finally:
+        _drop_table(table, conf)
 
+
+@allow_non_gpu("ExecutedCommandExec", *delta_meta_allow)
+@delta_lake
+@unity_catalog
+def test_catalog_managed_failed_ctas_leaves_no_table(unity_catalog_server):
+    """A CTAS that fails while running leaves nothing registered in the catalog."""
+    table_name, table = _new_table_name("catalog_managed_failed_create")
+    conf = _catalog_conf(unity_catalog_server)
+
+    try:
         with pytest.raises(Exception, match="DIVIDE_BY_ZERO"):
             with_gpu_session(
                 lambda spark: spark.sql(f"""
-                    CREATE TABLE {failed_table}
+                    CREATE TABLE {table}
                     USING DELTA
                     TBLPROPERTIES ('{_CATALOG_MANAGED_PROPERTY}' = 'supported')
                     AS SELECT id, 1L / (id - id) AS invalid
@@ -478,21 +504,34 @@ def test_catalog_managed_create_replace_rejections_and_abort(unity_catalog_serve
                 conf=conf)
         assert with_cpu_session(
             lambda spark: spark.sql(
-                f"SHOW TABLES IN {_CATALOG}.{_SCHEMA} LIKE '{failed_name}'").collect(),
+                f"SHOW TABLES IN {_CATALOG}.{_SCHEMA} LIKE '{table_name}'").collect(),
             conf=conf) == []
-
-        for statement in (f"OPTIMIZE {gpu_table}", f"REORG TABLE {gpu_table} APPLY (PURGE)"):
-            cpu_error = _error_class(
-                lambda statement=statement: with_cpu_session(
-                    lambda spark: spark.sql(statement).collect(), conf=conf))
-            gpu_error = _error_class(
-                lambda statement=statement: with_gpu_session(
-                    lambda spark: spark.sql(statement).collect(), conf=conf))
-            assert cpu_error == gpu_error == \
-                "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION"
     finally:
-        for table in (cpu_table, gpu_table, missing_table, failed_table):
-            _drop_table(table, conf)
+        _drop_table(table, conf)
+
+
+@allow_non_gpu("ExecutedCommandExec", *delta_meta_allow)
+@delta_lake
+@unity_catalog
+@pytest.mark.parametrize("statement", [
+    "OPTIMIZE {table}",
+    "REORG TABLE {table} APPLY (PURGE)"], ids=["optimize", "reorg_purge"])
+def test_catalog_managed_unsupported_operation_rejected(unity_catalog_server, statement):
+    """Operations Delta forbids on catalog-managed tables fail the same way on CPU and GPU."""
+    _, table = _new_table_name("catalog_managed_unsupported")
+    conf = _catalog_conf(unity_catalog_server)
+    sql = statement.format(table=table)
+
+    try:
+        assert_rapids_delta_write(
+            lambda spark: _create_catalog_managed_table(spark, table), conf=conf)
+        cpu_error = _error_class(
+            lambda: with_cpu_session(lambda spark: spark.sql(sql).collect(), conf=conf))
+        gpu_error = _error_class(
+            lambda: with_gpu_session(lambda spark: spark.sql(sql).collect(), conf=conf))
+        assert cpu_error == gpu_error == "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION"
+    finally:
+        _drop_table(table, conf)
 
 
 @allow_non_gpu(*delta_meta_allow)
