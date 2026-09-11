@@ -23,6 +23,7 @@
 # Options:
 #   --port N          client port, the server binds its REST API at N+1 (default 18080)
 #   --uc-version V    Unity Catalog version, 0.5.0 or later (default 0.6.0)
+#   --run-dir DIR     parent for the server's scratch directory (default $TMPDIR or /tmp)
 #   --refresh         re-resolve the cached classpaths before starting
 #
 # Without a command the server runs in the foreground and prints an env file to source from
@@ -40,6 +41,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UC_VERSION=${UNITY_CATALOG_VERSION:-'0.6.0'}
 DELTA_VERSION='4.2.0'
 UC_PORT=${UNITY_CATALOG_PORT:-'18080'}
+RUN_DIR_BASE=${TMPDIR:-/tmp}
 REFRESH=0
 COMMAND=()
 
@@ -63,6 +65,7 @@ Usage:
 Options:
   --port N          client port, the server binds its REST API at N+1 (default 18080)
   --uc-version V    Unity Catalog version, 0.5.0 or later (default 0.6.0)
+  --run-dir DIR     parent for the server's scratch directory (default $TMPDIR or /tmp)
   --refresh         re-resolve the cached classpaths before starting
 EOF
 }
@@ -71,6 +74,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --port) UC_PORT="$2"; shift 2 ;;
     --uc-version) UC_VERSION="$2"; shift 2 ;;
+    --run-dir) RUN_DIR_BASE="$2"; shift 2 ;;
     --refresh) REFRESH=1; shift ;;
     -h|--help) usage; exit 0 ;;
     --) shift; COMMAND=("$@"); break ;;
@@ -209,7 +213,8 @@ for port in "$UC_PORT" $((UC_PORT + 1)); do
   ! port_in_use "$port" || die "port $port is already in use, pass --port to pick another pair"
 done
 
-RUN_DIR=$(mktemp -d "${TMPDIR:-/tmp}/rapids-unity-catalog-XXXXXX")
+mkdir -p "$RUN_DIR_BASE"
+RUN_DIR=$(mktemp -d "$RUN_DIR_BASE/rapids-unity-catalog-XXXXXX")
 STORAGE_ROOT="$RUN_DIR/storage"
 mkdir -p "$STORAGE_ROOT" "$RUN_DIR/vertx-cache"
 UC_URI="http://localhost:${UC_PORT}/"

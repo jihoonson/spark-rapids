@@ -370,14 +370,13 @@ run_delta_lake_tests() {
 # The server itself runs in its own JVM, so unitycatalog-server (Armeria, Vert.x, Hibernate,
 # Spring, ...) never reaches Spark at all.
 run_delta_lake_uc_tests() {
-  local uc_version=${UNITY_CATALOG_VERSION:-'0.6.0'}
   local delta_version='4.2.0'
-  local spark_line=${SPARK_VER%.*}
 
   # These conditions mirror the Delta Lake 4.2.0 rows of run_delta_lake_tests above: that Delta
   # version is only exercised on Scala 2.13 with Spark 4.0.1 or 4.1.1. They are repeated rather
   # than read from DELTA_LAKE_VERSIONS because that variable is assigned inside
-  # run_delta_lake_tests, which TEST_MODE=DELTA_LAKE_UC_ONLY never runs.
+  # run_delta_lake_tests, which TEST_MODE=DELTA_LAKE_UC_ONLY never runs. run_unity_catalog_server.sh
+  # rejects the same combinations outright; CI skips them instead.
   if [[ "$SCALA_BINARY_VER" != "2.13" ]]; then
     echo "!!!! Skipping Unity Catalog tests. They require Scala 2.13, found $SCALA_BINARY_VER"
     return 0
@@ -387,89 +386,15 @@ run_delta_lake_uc_tests() {
       "Spark 4.0.1 and 4.1.1, found $SPARK_VER"
     return 0
   fi
-  # Unity Catalog 0.5.0 replaced the single unitycatalog-spark_<scala> connector with one
-  # artifact per Spark line, so earlier versions cannot be resolved by the coordinate below.
-  # Fail with the actual constraint instead of an opaque Maven resolution error.
-  if [[ "$(printf '%s\n0.5.0\n' "$uc_version" | sort -V | head -n 1)" != "0.5.0" ]]; then
-    echo "!!!! UNITY_CATALOG_VERSION=$uc_version is not supported, 0.5.0 or later is required" >&2
-    return 1
-  fi
 
-  # The Spark session only needs the Delta and Unity Catalog connector jars. Jackson and Hadoop
-  # come from Spark itself and the GCS connector is unused here, so exclude those groups rather
-  # than pinning Unity Catalog's transitive versions by hand. The AWS SDK needs no handling: it
-  # is declared 'provided' by unitycatalog-hadoop and is only loaded when credential renewal is
-  # enabled, which delta_lake_catalog_managed_test.py turns off.
-  # unitycatalog-client is declared explicitly because delta-storage depends on an older one at
-  # the same depth as unitycatalog-spark depends on the current one. Maven breaks a depth tie by
-  # declaration order, so without this the old client wins and classes added since then are
-  # missing at runtime.
-  local spark_jars="io.unitycatalog:unitycatalog-client:${uc_version},\
-io.delta:delta-spark_${spark_line}_${SCALA_BINARY_VER}:${delta_version},\
-io.delta:delta-storage:${delta_version},\
-io.unitycatalog:unitycatalog-spark_${spark_line}_${SCALA_BINARY_VER}:${uc_version}"
-  local excluded_groups="com.fasterxml.jackson.core,com.fasterxml.jackson.module"
-  excluded_groups+=",com.fasterxml.jackson.dataformat,com.fasterxml.jackson.datatype"
-  excluded_groups+=",org.apache.hadoop,com.google.cloud.bigdataoss"
-  local spark_classpath
-  spark_classpath=$(download_maven_jars "$spark_jars" "$excluded_groups")
-
-  local server_classpath
-  server_classpath=$(download_maven_jars "io.unitycatalog:unitycatalog-server:${uc_version}")
-
-  local uc_dir
-  uc_dir=$(mktemp -d "$ARTF_ROOT/unity-catalog-XXXXXX")
-  local storage_root="$uc_dir/storage"
-  mkdir -p "$storage_root" "$uc_dir/vertx-cache"
-
-  # The client-facing port; the server binds its API port at UC_PORT+1.
-  local uc_port=${UNITY_CATALOG_PORT:-'18080'}
-  local uc_uri="http://localhost:${uc_port}/"
-
-  # Every server setting can be supplied as a system property, so no server.properties is needed.
-  # vertx.cacheDirBase is redirected because Vert.x otherwise writes to /tmp.
-  java -Dvertx.cacheDirBase="$uc_dir/vertx-cache" \
-    -Dserver.env=test \
-    -Dserver.managed-table.enabled=true \
-    -Dstorage-root.tables="s3://test-bucket0${storage_root}" \
-    -Ds3.bucketPath.0=s3://test-bucket0 \
-    -Ds3.accessKey.0=accessKey0 \
-    -Ds3.secretKey.0=secretKey0 \
-    -Ds3.sessionToken.0=sessionToken0 \
-    -cp "$server_classpath" io.unitycatalog.server.UnityCatalogServer --port "$uc_port" \
-    > "$uc_dir/server.log" 2>&1 &
-  local uc_pid=$!
-  # Preserve any EXIT trap installed by a caller so it can be put back below.
-  local prev_exit_trap
-  prev_exit_trap=$(trap -p EXIT)
-  # shellcheck disable=SC2064  # uc_pid and uc_dir must be expanded now, not when the trap fires.
-  trap "kill $uc_pid 2>/dev/null || true; rm -rf '$uc_dir'" EXIT
-
-  if ! wget -q --retry-connrefused --tries=60 --waitretry=1 --timeout=120 \
-      -O /dev/null "${uc_uri}api/2.1/unity-catalog/catalogs"; then
-    echo "!!!! Unity Catalog server did not become ready, its log follows"
-    cat "$uc_dir/server.log"
-    return 1
-  fi
-
-  # CredentialTestFileSystem maps the fake s3 bucket onto local disk and asserts that the
-  # catalog-vended credentials reached the filesystem, so path-only access cannot pass.
+  # run_unity_catalog_server.sh owns the jar resolution, the server lifecycle and every setting
+  # the tests need, so it is shared with local runs instead of being duplicated here. The scratch
+  # directory is placed under ARTF_ROOT so the server log and the fake S3 tree stay in the
+  # workspace. UNITY_CATALOG_VERSION and UNITY_CATALOG_PORT are read by the script directly.
   env \
     HOST_NAME=$PROJECT_REPO_HOST \
-    EXTRA_MAVEN_CLASSPATH="$spark_classpath" \
-    DELTA_UC_URI="$uc_uri" \
-    DELTA_UC_STORAGE_ROOT="$storage_root" \
-    PYSP_TEST_spark_sql_extensions="io.delta.sql.DeltaSparkSessionExtension" \
-    PYSP_TEST_spark_sql_catalog_spark__catalog="org.apache.spark.sql.delta.catalog.DeltaCatalog" \
-    PYSP_TEST_spark_hadoop_fs_s3_impl="com.nvidia.spark.rapids.tests.delta.CredentialTestFileSystem" \
-    PYSP_TEST_spark_rapids_perfio_s3_enabled=false \
-    ./run_pyspark_from_build.sh -m unity_catalog --delta_lake --unity_catalog
-
-  # On failure `set -e` exits and the EXIT trap stops the server and removes $uc_dir instead.
-  kill "$uc_pid" 2>/dev/null || true
-  rm -rf "$uc_dir"
-  # Restore the caller's EXIT trap rather than clearing traps outright.
-  eval "${prev_exit_trap:-trap - EXIT}"
+    ./run_unity_catalog_server.sh --run-dir "$ARTF_ROOT" -- \
+      ./run_pyspark_from_build.sh -m unity_catalog --delta_lake --unity_catalog
 }
 
 run_iceberg_tests() {
