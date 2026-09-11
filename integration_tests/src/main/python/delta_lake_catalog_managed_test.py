@@ -128,7 +128,6 @@ def _catalog_conf(unity_catalog_server):
         f"{prefix}.renewCredential.enabled": "false",
         f"{prefix}.credScopedFs.enabled": "false",
         "spark.databricks.delta.delete.deletionVectors.persistent": "true",
-        "spark.rapids.sql.format.parquet.reader.type": "PERFILE",
     }
 
 
