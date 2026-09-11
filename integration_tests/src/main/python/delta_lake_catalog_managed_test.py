@@ -47,6 +47,21 @@ def _api_client(jvm, uri):
         .build()
 
 
+def _create_if_absent(create, already_exists_code):
+    """
+    Runs a Unity Catalog create call, tolerating an object that is already there.
+
+    This fixture is module scoped, so it runs once per pytest-xdist worker rather than once per
+    session, and a server started by run_unity_catalog_server.sh outlives a single pytest run.
+    Either way only the first caller creates the object and the rest see ALREADY_EXISTS.
+    """
+    try:
+        create()
+    except Exception as error:
+        if already_exists_code not in str(error):
+            raise
+
+
 @pytest.fixture(scope="module")
 def unity_catalog_server():
     """
@@ -54,8 +69,8 @@ def unity_catalog_server():
 
     The server runs in its own JVM so that only the Unity Catalog Spark connector, and not the
     server and its dependency tree, ends up on the Spark classpath. `DELTA_UC_URI` and
-    `DELTA_UC_STORAGE_ROOT` are exported by jenkins/spark-tests.sh; see
-    integration_tests/README.md for running this suite by hand.
+    `DELTA_UC_STORAGE_ROOT` are exported by integration_tests/run_unity_catalog_server.sh and by
+    jenkins/spark-tests.sh; see integration_tests/README.md for running this suite by hand.
     """
     jvm = spark_jvm()
     uri = unity_catalog_uri()
@@ -64,14 +79,19 @@ def unity_catalog_server():
 
     client = _api_client(jvm, uri)
     catalogs_api = jvm.io.unitycatalog.client.api.CatalogsApi(client)
-    catalogs_api.createCatalog(
-        jvm.io.unitycatalog.client.model.CreateCatalog()
-        .name(_CATALOG)
-        .comment("RAPIDS catalog-managed table integration tests"))
-    jvm.io.unitycatalog.client.api.SchemasApi(client).createSchema(
-        jvm.io.unitycatalog.client.model.CreateSchema()
-        .name(_SCHEMA)
-        .catalogName(_CATALOG))
+    _create_if_absent(
+        lambda: catalogs_api.createCatalog(
+            jvm.io.unitycatalog.client.model.CreateCatalog()
+            .name(_CATALOG)
+            .comment("RAPIDS catalog-managed table integration tests")),
+        "CATALOG_ALREADY_EXISTS")
+    schemas_api = jvm.io.unitycatalog.client.api.SchemasApi(client)
+    _create_if_absent(
+        lambda: schemas_api.createSchema(
+            jvm.io.unitycatalog.client.model.CreateSchema()
+            .name(_SCHEMA)
+            .catalogName(_CATALOG)),
+        "SCHEMA_ALREADY_EXISTS")
 
     yield {
         "uri": uri,
@@ -88,6 +108,23 @@ def _catalog_conf(unity_catalog_server):
         f"{prefix}.uri": unity_catalog_server["uri"],
         f"{prefix}.token": _STATIC_TOKEN,
         f"{prefix}.warehouse": _CATALOG,
+        # Both of the following default to true in Unity Catalog and are deliberately turned off.
+        #
+        # renewCredential.enabled=false makes Unity Catalog publish the vended credentials as
+        # plain fs.s3a.access.key/secret.key/session.token values, which is what
+        # CredentialTestFileSystem asserts. With renewal on it would instead install a
+        # credential-provider class that needs the AWS SDK on the classpath.
+        #
+        # credScopedFs.enabled=false keeps Unity Catalog from overriding fs.s3.impl with its own
+        # wrapper filesystem. The wrapper does preserve the original implementation, but only if
+        # it can read it back from an active Spark session, so leaving it off keeps
+        # CredentialTestFileSystem unambiguously in the path. This default flipped to true in
+        # Unity Catalog 0.6.0, so the setting is load-bearing rather than merely explicit.
+        #
+        # deltaRestApi.enabled is intentionally NOT set. It defaults to true but Unity Catalog
+        # ignores it below Delta Lake 4.3.0, so it is that version gate, not this config, that
+        # keeps the pre-4.3 staging path in use. A future Delta upgrade is expected to surface
+        # here rather than silently switch Unity Catalog onto an untested staging mechanism.
         f"{prefix}.renewCredential.enabled": "false",
         f"{prefix}.credScopedFs.enabled": "false",
         "spark.databricks.delta.delete.deletionVectors.persistent": "true",

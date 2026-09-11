@@ -18,7 +18,6 @@ package com.nvidia.spark.rapids.tests.delta;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.lang.reflect.Method;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
@@ -32,10 +31,15 @@ import org.apache.hadoop.util.Progressable;
 /**
  * Test-only S3 filesystem backed by local disk.
  *
- * <p>The OSS Unity Catalog connector wraps this filesystem and supplies credentials in the Hadoop
- * configuration associated with a catalog table. Every filesystem access validates those
- * credentials before mapping the S3 path to local storage. This makes a path-only DeltaLog fail
- * while a catalog-aware DeltaLog succeeds.
+ * <p>The OSS Unity Catalog connector fetches temporary storage credentials from the catalog
+ * server and publishes them in the Hadoop configuration attached to a catalog table. Every
+ * filesystem access validates those credentials before mapping the S3 path to local storage, so
+ * a path-only DeltaLog fails while a catalog-aware DeltaLog succeeds.
+ *
+ * <p>The credentials arrive as plain configuration values because
+ * {@code delta_lake_catalog_managed_test.py} sets {@code renewCredential.enabled} to false. With
+ * renewal enabled Unity Catalog would instead publish a credential-provider class and a separate
+ * set of {@code fs.s3a.init.*} keys, which would require the AWS SDK on the classpath.
  */
 public class CredentialTestFileSystem extends RawLocalFileSystem {
   private static final String SCHEME = "s3:";
@@ -43,14 +47,12 @@ public class CredentialTestFileSystem extends RawLocalFileSystem {
   private static final String EXPECTED_ACCESS_KEY = "accessKey0";
   private static final String EXPECTED_SECRET_KEY = "secretKey0";
   private static final String EXPECTED_SESSION_TOKEN = "sessionToken0";
-  private static final String UC_VENDED_TOKEN_PROVIDER =
-      "io.unitycatalog.spark.auth.storage.AwsVendedTokenProvider";
 
-  // Same key as org.apache.hadoop.fs.s3a.Constants#AWS_CREDENTIALS_PROVIDER. Keep the test helper
-  // independent of hadoop-aws and the AWS SDK so it can live in the regular integration-test jar.
-  private static final String S3A_CREDENTIALS_PROVIDER = "fs.s3a.aws.credentials.provider";
-
-  private Object provider;
+  // Same keys as org.apache.hadoop.fs.s3a.Constants. Keep the test helper independent of
+  // hadoop-aws and the AWS SDK so it can live in the regular integration-test jar.
+  private static final String S3A_ACCESS_KEY = "fs.s3a.access.key";
+  private static final String S3A_SECRET_KEY = "fs.s3a.secret.key";
+  private static final String S3A_SESSION_TOKEN = "fs.s3a.session.token";
 
   @Override
   protected void checkPath(Path path) {
@@ -144,46 +146,9 @@ public class CredentialTestFileSystem extends RawLocalFileSystem {
   private void checkCredentials(Path path) {
     assertEquals(EXPECTED_BUCKET, path.toUri().getHost(), "S3 bucket");
     Configuration conf = getConf();
-    Object credentialsProvider = resolveProvider(conf);
-    if (credentialsProvider == null) {
-      assertEquals(EXPECTED_ACCESS_KEY, conf.get("fs.s3a.access.key"), "access key");
-      assertEquals(EXPECTED_SECRET_KEY, conf.get("fs.s3a.secret.key"), "secret key");
-      assertEquals(EXPECTED_SESSION_TOKEN, conf.get("fs.s3a.session.token"), "session token");
-      return;
-    }
-
-    try {
-      Object credentials = credentialsProvider.getClass()
-          .getMethod("resolveCredentials")
-          .invoke(credentialsProvider);
-      assertCredential(credentials, "accessKeyId", EXPECTED_ACCESS_KEY);
-      assertCredential(credentials, "secretAccessKey", EXPECTED_SECRET_KEY);
-      assertCredential(credentials, "sessionToken", EXPECTED_SESSION_TOKEN);
-    } catch (ReflectiveOperationException e) {
-      throw new IllegalStateException("Unable to validate Unity Catalog credentials", e);
-    }
-  }
-
-  private void assertCredential(Object credentials, String methodName, String expected)
-      throws ReflectiveOperationException {
-    Method method = credentials.getClass().getMethod(methodName);
-    assertEquals(expected, method.invoke(credentials), methodName);
-  }
-
-  private synchronized Object resolveProvider(Configuration conf) {
-    if (provider != null) {
-      return provider;
-    }
-    String className = conf.get(S3A_CREDENTIALS_PROVIDER);
-    if (!UC_VENDED_TOKEN_PROVIDER.equals(className)) {
-      return null;
-    }
-    try {
-      provider = Class.forName(className).getConstructor(Configuration.class).newInstance(conf);
-      return provider;
-    } catch (ReflectiveOperationException e) {
-      throw new IllegalStateException("Unable to instantiate credential provider " + className, e);
-    }
+    assertEquals(EXPECTED_ACCESS_KEY, conf.get(S3A_ACCESS_KEY), "access key");
+    assertEquals(EXPECTED_SECRET_KEY, conf.get(S3A_SECRET_KEY), "secret key");
+    assertEquals(EXPECTED_SESSION_TOKEN, conf.get(S3A_SESSION_TOKEN), "session token");
   }
 
   private void assertEquals(String expected, Object actual, String fieldName) {
