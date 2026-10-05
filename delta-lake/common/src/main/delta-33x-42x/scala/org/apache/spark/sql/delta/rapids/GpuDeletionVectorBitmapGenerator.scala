@@ -42,6 +42,7 @@ private[rapids] object GpuDeletionVectorBitmapGenerator extends GpuDeltaCommandL
    * @param condition predicate selecting rows to invalidate
    * @param nameToAddFileMap canonical file-path lookup used to construct touched-file results
    * @param operationName DML operation name used for Delta operation recording
+   * @param writeMetrics optional executor timings for DV output stream operations
    * @return touched files and their replacement deletion vectors
    */
   def findTouchedFiles(
@@ -52,13 +53,18 @@ private[rapids] object GpuDeletionVectorBitmapGenerator extends GpuDeltaCommandL
       candidateFiles: Seq[AddFile],
       condition: Column,
       nameToAddFileMap: Map[String, AddFile],
-      operationName: String): Seq[TouchedFileWithDV] = {
+      operationName: String,
+      writeMetrics: Option[GpuDeletionVectorWriteMetrics] = None): Seq[TouchedFileWithDV] = {
     recordDeltaOperation(txn.deltaLog, s"$operationName.findTouchedFiles") {
       val gpuTargetDf = DMLWithDeletionVectorsHelperShims.withGpuExecutionContext(
         spark, targetScan.dataFrame)
       val candidatesHaveDVs =
         hasReadableDVs && candidateFiles.exists(_.deletionVector != null)
-      val storedResults = DeletionVectorBitmapGenerator.buildRowIndexSetsForFilesMatchingCondition(
+      val storedResults = writeMetrics.map { metrics =>
+        GpuDeletionVectorWriter.buildDeletionVectors(
+          spark, txn, candidatesHaveDVs, targetScan.copy(dataFrame = gpuTargetDf),
+          condition, candidateFiles, metrics)
+      }.getOrElse(DeletionVectorBitmapGenerator.buildRowIndexSetsForFilesMatchingCondition(
         spark,
         txn,
         candidatesHaveDVs,
@@ -66,7 +72,7 @@ private[rapids] object GpuDeletionVectorBitmapGenerator extends GpuDeltaCommandL
         candidateFiles,
         DFUDFShims.columnToExpr(condition),
         Some(targetScan.filePathColumn),
-        Some(targetScan.rowIndexColumn))
+        Some(targetScan.rowIndexColumn)))
 
       DMLWithDeletionVectorsHelper.findFilesWithMatchingRows(txn, nameToAddFileMap, storedResults)
     }

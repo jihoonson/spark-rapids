@@ -237,7 +237,8 @@ abstract class GpuDeleteCommandBase(
               candidateFiles,
               exprToColumn(cond),
               nameToAddFileMap,
-              operationName = "DELETE")
+              operationName = "DELETE",
+              writeMetrics = Some(GpuDeletionVectorWriteMetrics.create(sparkSession.sparkContext)))
 
             if (touchedFiles.nonEmpty) {
               val (actions, metricMap) = processUnmodifiedData(

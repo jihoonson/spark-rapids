@@ -170,7 +170,8 @@ abstract class GpuUpdateCommandBase(
           candidateFiles,
           exprToColumn(updateCondition),
           nameToAddFile,
-          operationName = "UPDATE")
+          operationName = "UPDATE",
+          writeMetrics = Some(GpuDeletionVectorWriteMetrics.create(sparkSession.sparkContext)))
       } else {
         // Case 3.2: Find all the affected files using the non-DV path
         // Keep everything from the resolved target except a new TahoeFileIndex

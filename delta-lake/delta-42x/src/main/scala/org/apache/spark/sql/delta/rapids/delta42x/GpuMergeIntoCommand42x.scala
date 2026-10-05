@@ -42,6 +42,7 @@ import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.rapids.{
   DMLWithDeletionVectorsHelperShims,
   GpuDeletionVectorBitmapGenerator,
+  GpuDeletionVectorWriteMetrics,
   GpuDeltaCommandLike,
   GpuDeltaLog,
   GpuMergeStats,
@@ -140,7 +141,8 @@ case class GpuMergeIntoCommand42x(
       filesToRewrite,
       DFUDFShims.exprToColumn(generateFilterForModifiedRows()),
       nameToAddFileMap,
-      operationName = "MERGE")
+      operationName = "MERGE",
+      writeMetrics = Some(GpuDeletionVectorWriteMetrics.create(spark.sparkContext)))
     val (dvActions, metricsMap) = DMLWithDeletionVectorsHelperShims.processUnmodifiedData(
       spark.asInstanceOf[ClassicSparkSession], touchedFilesWithDVs, gpuTxn)
     metrics("numTargetDeletionVectorsAdded")

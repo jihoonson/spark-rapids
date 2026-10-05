@@ -134,7 +134,8 @@ case class GpuMergeIntoCommand(
       filesToRewrite,
       DFUDFShims.exprToColumn(generateFilterForModifiedRows()),
       nameToAddFileMap,
-      operationName = "MERGE")
+      operationName = "MERGE",
+      writeMetrics = Some(GpuDeletionVectorWriteMetrics.create(spark.sparkContext)))
     val (dvActions, metricsMap) = DMLWithDeletionVectorsHelperShims.processUnmodifiedData(
       spark.asInstanceOf[ClassicSparkSession], touchedFilesWithDVs, gpuTxn)
     metrics("numTargetDeletionVectorsAdded")
