@@ -27,6 +27,19 @@ private[rapids] trait RapidsConfResourceEntries {
 
   // Resource Configuration
 
+  val DELTA_DELETION_VECTOR_WRITE_NUM_THREADS =
+    conf("spark.rapids.sql.delta.deletionVectors.write.numThreads")
+      .doc("Number of threads per executor for writing packed Delta deletion vector files. " +
+        "Set to 0 to keep sequential writing within each task. Positive values enable an " +
+        "executor-wide pool with fair admission and at most one queued bin per writer thread. " +
+        "This does not change deletion vector packing and must be set at executor startup.")
+      .sinceVersion(ConfVersionInfo.UNRELEASED_VERSION)
+      .startupOnly()
+      .integerConf
+      .checkValue(v => v >= 0 && v <= Int.MaxValue / 2,
+        "Deletion vector writer thread count must be nonnegative and at most Int.MaxValue / 2")
+      .createWithDefault(0)
+
   val PINNED_POOL_SIZE = conf("spark.rapids.memory.pinnedPool.size")
     .doc("The size of the pinned memory pool in bytes unless otherwise specified. " +
       "Use 0 to disable the pool.")

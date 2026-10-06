@@ -23,6 +23,7 @@ package org.apache.spark.sql.delta.rapids
 
 import java.nio.charset.StandardCharsets.UTF_8
 
+import com.nvidia.spark.rapids.Arm.withResource
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.FSDataOutputStream
 
@@ -119,14 +120,23 @@ private[rapids] object GpuDeletionVectorWriter {
       val store = new GpuTimedDeletionVectorStore(hadoopConf.value.value, metrics)
       val tablePath = DeletionVectorStore.escapedStringToPath(tablePathString)
       val tablePathWithFS = store.pathWithFileSystem(tablePath)
-      new BinPackingIterator(rows, packingTargetSize).flatMap { bin =>
+      val pool = GpuDeletionVectorWritePool.get
+      def writeBin(bin: Seq[DeletionVectorData]): Seq[DeletionVectorResult] = {
         val prefix = DeltaUtils.getRandomPrefix(prefixLength)
         val (writer, fileId) = DeletionVectorWriter.createWriter(store, tablePathWithFS, prefix)
         val context = DeletionVectorMapperContext(store, writer, tablePath, fileId, prefix)
-        SparkUtils.tryWithResource(writer) { _ =>
+        def writeRows(): Seq[DeletionVectorResult] =
           bin.map(row => DeletionVectorWriter.storeBitmapAndGenerateResult(context, row))
+        if (pool.isDefined) {
+          // A completed parallel bin must include a successful close on every Spark version.
+          withResource(writer)(_ => writeRows())
+        } else {
+          SparkUtils.tryWithResource(writer)(_ => writeRows())
         }
       }
+      val bins = new BinPackingIterator(rows, packingTargetSize)
+      pool.map(new GpuDeletionVectorWriteIterator(bins, _, writeBin))
+        .getOrElse(bins.flatMap(writeBin))
     }.collect().toSeq
   }
 }

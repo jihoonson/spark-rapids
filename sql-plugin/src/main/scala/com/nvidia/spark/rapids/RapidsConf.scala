@@ -1003,6 +1003,8 @@ class RapidsConf(conf: Map[String, String]) extends Logging {
 
   lazy val numFilesFilterParallel: Int = get(NUM_FILES_FILTER_PARALLEL)
 
+  lazy val deltaDeletionVectorWriteNumThreads: Int = get(DELTA_DELETION_VECTOR_WRITE_NUM_THREADS)
+
   lazy val enableMultiThreadReadMemoryLimit: Boolean = get(MULTITHREAD_READ_MEMORY_LIMIT_ENABLED)
 
   lazy val multiThreadReadMemoryLimit: Long = get(MULTITHREAD_READ_MEMORY_LIMIT_SIZE)

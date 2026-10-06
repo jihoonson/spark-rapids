@@ -23,6 +23,7 @@ package org.apache.spark.sql.delta.rapids
 import java.io.IOException
 import java.nio.file.Files
 
+import com.nvidia.spark.rapids.RapidsConf
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.mockito.Mockito.when
@@ -182,6 +183,74 @@ class GpuDeletionVectorWriterSuite extends AnyFunSuite {
       } finally {
         spark.stop()
       }
+    }
+  }
+
+  test("parallel mapper preserves packing and existing bitmaps across many target files") {
+    withStore { (store, path, _) =>
+      val tablePath = path.getParent
+      val bitmap = new RoaringBitmapArray()
+      bitmap.add(1L)
+      val (writer, fileId) = DeletionVectorWriter.createWriter(
+        store, store.pathWithFileSystem(tablePath))
+      val existingDV = SparkUtils.tryWithResource(writer) { _ =>
+        DeletionVectorWriter.storeSerializedBitmap(
+          DeletionVectorMapperContext(store, writer, tablePath, fileId, ""),
+          bitmap.serializeAsByteArray(RoaringBitmapArrayFormat.Portable), bitmap.cardinality)
+      }
+      val files = (0 until 30).map { id =>
+        AddFile(s"part-$id.parquet", Map.empty, 100L, 0L, dataChange = true,
+          deletionVector = existingDV)
+      }
+      val deltaLog = mock[DeltaLog]
+      when(deltaLog.dataPath).thenReturn(tablePath)
+      when(deltaLog.newDeltaHadoopConf()).thenReturn(new Configuration())
+      val txn = mock[GpuOptimisticTransactionBase]
+      when(txn.deltaLog).thenReturn(deltaLog)
+      when(txn.metadata).thenReturn(Metadata())
+
+      def run(threads: Int): Set[Seq[String]] = {
+        val spark = SparkSession.builder().master("local[2]")
+          .appName("Packed DV parallel writer test")
+          .config("spark.ui.enabled", "false")
+          .config("spark.sql.shuffle.partitions", "1")
+          .config("spark.databricks.delta.deletionVectors.packing.targetSize", "384")
+          .config(RapidsConf.DELTA_DELETION_VECTOR_WRITE_NUM_THREADS.key, threads.toString)
+          .getOrCreate()
+        try {
+          import spark.implicits._
+          val rows = files.flatMap { file =>
+            val dataPath = new Path(tablePath, file.path).toUri.toString
+            Seq((dataPath, 5L), (dataPath, 100L))
+          }.toDF("file", "rowIndex")
+          val results = GpuDeletionVectorWriter.buildDeletionVectors(
+            spark, txn, candidatesHaveDVs = true,
+            GpuTargetScan(rows, col("file"), col("rowIndex")), lit(true), files,
+            GpuDeletionVectorWriteMetrics.create(spark.sparkContext))
+          assert(results.size == files.size)
+          results.foreach { result =>
+            assert(result.matchedRowCount == 2)
+            assert(result.deletionVector.cardinality == 3)
+            val merged = store.read(result.deletionVector, tablePath)
+            assert(Seq(1L, 5L, 100L).forall(merged.contains))
+          }
+          val packed = results.groupBy(_.deletionVector.pathOrInlineDv).values
+            .map(_.map(_.filePath).sorted).toSet
+          assert(packed.size > 1)
+          assert(packed.exists(_.size > 1))
+          val expectedThreads = if (threads == 0) None else Some(threads)
+          assert(GpuDeletionVectorWritePool.get.map(_.numThreads) == expectedThreads)
+          spark.conf.set(RapidsConf.DELTA_DELETION_VECTOR_WRITE_NUM_THREADS.key,
+            (if (threads == 0) 2 else 0).toString)
+          assert(GpuDeletionVectorWritePool.get.map(_.numThreads) == expectedThreads,
+            "Session settings must not change the executor's startup pool size")
+          packed
+        } finally {
+          spark.stop()
+        }
+      }
+
+      assert(run(0) == run(2))
     }
   }
 }
